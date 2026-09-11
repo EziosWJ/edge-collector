@@ -1,0 +1,27 @@
+name: Migrate from base-project-golang iot
+
+on:
+  push:
+    paths:
+      - .github/workflows/migrate-from-iot.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch source iot branch
+        run: |
+          git remote add source https://github.com/EziosWJ/base-project-golang.git
+          git fetch source iot
+
+      - name: Replace main with source iot branch
+        run: |
+          git push --force origin refs/remotes/source/iot:refs/heads/main
