@@ -109,20 +109,40 @@ internal/acquisition
 
 ## 5. Modbus 与串口依赖
 
-第一阶段建议采用：
+第一阶段采用：
 
-- `github.com/grid-x/modbus` 作为 Modbus RTU Client 实现；
-- 不在业务层直接扩散第三方库类型；
-- 在采集基础设施边界内封装串口会话和 Modbus 请求。
+- `github.com/simonvetter/modbus` 作为 Modbus Client 基础实现；
+- 第一阶段只启用其 RS485 / Modbus RTU 能力；
+- 第三方 Modbus 库必须隔离在采集基础设施边界，业务层、协议业务模型和 HTTP DTO 不得直接依赖该库类型；
+- 在采集基础设施边界内封装串口会话、Slave 切换和 Modbus 请求。
 
 选择理由：
 
-1. 支持 RTU / ASCII / TCP / UDP，后续传输方式扩展有余地，但第一阶段只启用 RTU；
-2. 请求 API 支持 `context.Context`，便于控制超时和关闭；
-3. 2026 年仍有针对串口链路恢复、PTY 测试及传输错误处理的持续维护；
-4. 直接复用成熟 CRC、帧编解码和串口实现，避免自行实现 Modbus RTU 协议栈。
+1. 原生支持串口 Modbus RTU，并同时支持 Modbus TCP、RTU over TCP、Modbus TCP over UDP 和 RTU over UDP，与 Edge Collector 后续已确认的 TCP / UDP / RTU over UDP 路线匹配；
+2. 提供较高层的寄存器读取能力以及整数、浮点、字节序和 word order 支持，可降低不同厂家设备协议适配中的重复编解码代码；
+3. 同时提供 Client 和 Modbus TCP Server 能力，虽然第一阶段不使用 Server，但与完整产品后续 Modbus Server 方向更一致；
+4. 项目仍在维护，RTU 传输层已有针对串口 RX 缓冲旧数据等现场问题的修复；
+5. 直接复用成熟 CRC、RTU 帧和串口实现，避免自行实现 Modbus RTU 协议栈。
 
-业务代码不得依赖其未来可能使用的 TCP/UDP 能力；本阶段只把它作为 RS485 Modbus RTU 基础设施。
+### 5.1 隔离与可替换约束
+
+选用 `simonvetter/modbus` 不意味着业务层绑定该库。
+
+必须保持以下依赖方向：
+
+```text
+馈电保护器协议 / 采集运行时 / 当前状态
+                ↓
+      项目自身的采集 I/O 边界
+                ↓
+     simonvetter/modbus + serial
+```
+
+禁止让馈电保护器业务结构、当前状态结构、HTTP DTO 直接包含 `simonvetter/modbus` 的 Client、寄存器类型或错误类型。
+
+如果开发机 PTY 或后续 RK3568 实机验证发现其串口断线恢复、取消语义或现场稳定性不能满足要求，应允许仅替换基础设施实现，而不重写协议解析、采集调度和页面 API。
+
+第一阶段必须通过 PTY / 虚拟串口覆盖至少以下失败场景：超时、无响应、异常响应、重新恢复通信。是否需要在库外增加 reopen / retry 策略，根据这些测试结果决定，不在技术方案阶段提前写死。
 
 ## 6. 运行拓扑：按物理通信通道串行执行
 
