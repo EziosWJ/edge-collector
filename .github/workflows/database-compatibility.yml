@@ -3,12 +3,12 @@ name: Database compatibility gate
 on:
   push:
     paths:
-      - "base-go-api/**"
+      - "edge-collector-api/**"
       - "Taskfile.yml"
       - ".github/workflows/database-compatibility.yml"
   pull_request:
     paths:
-      - "base-go-api/**"
+      - "edge-collector-api/**"
       - "Taskfile.yml"
       - ".github/workflows/database-compatibility.yml"
 
@@ -21,15 +21,15 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: base-go-api
+        working-directory: edge-collector-api
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: base-go-api/go.mod
-          cache-dependency-path: base-go-api/go.sum
+          go-version-file: edge-collector-api/go.mod
+          cache-dependency-path: edge-collector-api/go.sum
       - name: Run backend check
         run: |
           go test ./...
@@ -40,15 +40,15 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: base-go-api
+        working-directory: edge-collector-api
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: base-go-api/go.mod
-          cache-dependency-path: base-go-api/go.sum
+          go-version-file: edge-collector-api/go.mod
+          cache-dependency-path: edge-collector-api/go.sum
       - name: Check migration streams
         run: go test ./migrations
       - name: Run SQLite integration contract
@@ -59,15 +59,15 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: base-go-api
+        working-directory: edge-collector-api
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: base-go-api/go.mod
-          cache-dependency-path: base-go-api/go.sum
+          go-version-file: edge-collector-api/go.mod
+          cache-dependency-path: edge-collector-api/go.sum
       - name: Run PostgreSQL integration contract
         run: >-
           go test -tags=integration ./integration
