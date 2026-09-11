@@ -30,3 +30,5 @@ jobs:
             exit $rc
           fi
           echo 'No active legacy project identity references found.'
+
+# Temporary verification workflow; remove after a successful run.
