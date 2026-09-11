@@ -2,7 +2,7 @@
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
-- **Remote**: `https://github.com/EziosWJ/base-project-golang.git` (origin)
+- **Remote**: `https://github.com/EziosWJ/edge-collector.git` (origin)
 - **Infer the repo**: `gh` does this automatically when run inside a clone.
 
 ## Conventions

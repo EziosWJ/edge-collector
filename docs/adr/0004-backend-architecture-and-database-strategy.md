@@ -20,7 +20,7 @@ Accepted
 
 采用模块化单体，代码按业务模块组织。清晰的模块边界为未来服务拆分做准备，但当前不实施微服务基础设施。
 
-首次创建 `base-go-api/` 时使用 `cmd/api`、`cmd/migrate`、`configs`、`migrations`、`docs`、`internal/app`、`internal/config`、`internal/platform/{database,http}` 与首个 `internal/auth` 模块。测试与模块代码同目录放置；不创建全局 controller/service/repository 目录。
+首次创建 `edge-collector-api/` 时使用 `cmd/api`、`cmd/migrate`、`configs`、`migrations`、`docs`、`internal/app`、`internal/config`、`internal/platform/{database,http}` 与首个 `internal/auth` 模块。测试与模块代码同目录放置；不创建全局 controller/service/repository 目录。
 
 ### 2. Web
 

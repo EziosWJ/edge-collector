@@ -29,8 +29,8 @@ Go API 原先要求数据库 DSN 和 JWT 密钥只能通过环境变量提供。
 ```yaml
 database:
   driver: postgres
-  url: postgres://db.example.internal:5432/base_go_api?sslmode=require
-  username: base_go_api
+  url: postgres://db.example.internal:5432/edge_collector?sslmode=require
+  username: edge_collector
   password: change-me
 ```
 

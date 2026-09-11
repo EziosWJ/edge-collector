@@ -13,7 +13,7 @@ export function SettingsPage() {
       <ContentCard title="基础设置">
         <div className="grid gap-4 md:grid-cols-3">
           {[
-            ["系统名称", "智慧综合管理平台"],
+            ["系统名称", "Edge Collector"],
             ["认证方式", "模拟登录"],
             ["权限模型", "登录态守卫"],
           ].map(([label, value]) => (

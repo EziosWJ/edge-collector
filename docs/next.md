@@ -940,4 +940,4 @@ java项目连接的是mysql数据库，但我已经将数据库迁移到postgres
 192.168.1.48:5432
 用户名：pgsql
 密码：pgsql
-数据库：base_project_golang
+数据库：edge_collector

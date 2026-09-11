@@ -139,7 +139,7 @@ export const mockSystemConfigs: SystemConfigRecord[] = [
     id: 1,
     name: "系统名称",
     key: "system.name",
-    value: "智慧综合管理平台",
+    value: "Edge Collector",
     type: "string",
     status: "enabled",
     updatedAt: "2026-05-01 11:32",

@@ -9,8 +9,8 @@
             "name": "Go API (dev)",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/base-go-api/cmd/api",
-            "cwd": "${workspaceFolder}/base-go-api",
+            "program": "${workspaceFolder}/edge-collector-api/cmd/api",
+            "cwd": "${workspaceFolder}/edge-collector",
             "env": {
                 "APP_ENV": "dev"
             }
@@ -20,8 +20,8 @@
             "name": "Go Migration (dev)",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/base-go-api/cmd/migrate",
-            "cwd": "${workspaceFolder}/base-go-api",
+            "program": "${workspaceFolder}/edge-collector-api/cmd/migrate",
+            "cwd": "${workspaceFolder}/edge-collector",
             "args": [
                 "up",
                 "--kind",

@@ -198,7 +198,7 @@ export function AppSidebar({ collapsed }: AppSidebarProps) {
         {!collapsed && (
           <div className="min-w-0">
             <div className="truncate text-base font-semibold text-text-primary">
-              智慧综合管理平台
+              Edge Collector
             </div>
             <div className="truncate text-xs text-text-tertiary">管理控制台</div>
           </div>

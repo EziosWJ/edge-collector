@@ -18,7 +18,7 @@ function MobileBrand() {
         <Boxes className="h-5 w-5" aria-hidden />
       </div>
       <div>
-        <p className="text-base font-semibold tracking-tight text-text-primary">智慧综合管理平台</p>
+        <p className="text-base font-semibold tracking-tight text-text-primary">Edge Collector</p>
         <p className="mt-0.5 text-xs text-text-tertiary">
           Intelligent Management Platform
         </p>
@@ -137,7 +137,7 @@ export function LoginPage() {
             </div>
             <div>
               <p className="text-xl font-semibold tracking-tight text-text-primary">
-                智慧综合管理平台
+                Edge Collector
               </p>
               <p className="mt-1 text-xs tracking-wide text-text-tertiary">
                 Intelligent Management Platform
@@ -281,7 +281,7 @@ export function LoginPage() {
             </form>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400">© 2026 智慧综合管理平台</p>
+          <p className="mt-6 text-center text-xs text-slate-400">© 2026 Edge Collector</p>
         </div>
       </section>
     </main>
