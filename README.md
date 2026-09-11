@@ -18,12 +18,14 @@
 
 > 以上为项目需求边界，不代表相关采集能力已经全部实现。当前阶段首先完成项目基础设施与需求设计，再逐步落地设备接入能力。
 
+正式需求基线：[`docs/requirements/edge-collector-requirements.md`](docs/requirements/edge-collector-requirements.md)
+
 ## 目录结构
 
 ```text
 ├── edge-collector-api/   # Go REST API 与后续边缘采集后端
 ├── react-admin/          # React 管理后台
-├── docs/                 # ADR、部署记录与项目文档
+├── docs/                 # ADR、需求、部署记录与项目文档
 ├── CONTEXT.md            # 项目上下文与架构约定
 └── Taskfile.yml          # 跨平台开发任务
 ```
