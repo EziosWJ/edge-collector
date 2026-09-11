@@ -1,1 +1,0 @@
-Ticket creation in progress.
