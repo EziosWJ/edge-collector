@@ -1,0 +1,22 @@
+name: Identity audit
+
+on:
+  push:
+    paths:
+      - .github/workflows/identity-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Find legacy project identity references
+        run: |
+          set +e
+          git grep -nEi 'base-project-golang|base_project_golang|base-go-api|local_project|react-admin-template|智慧综合管理平台|base project|base go api'
+          exit 0
