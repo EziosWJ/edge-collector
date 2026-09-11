@@ -1,0 +1,152 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+env:
+  APP_ENV: dev
+  GOCACHE: '{{.ROOT_DIR}}/.task/go-build'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  db:migrate:
+    desc: Apply schema and seed migrations
+    dir: base-go-api
+    cmds:
+      - go run ./cmd/migrate up --kind all
+
+  db:migrate:sqlite:
+    desc: Apply SQLite schema and seed migrations using the SQLite profile
+    dir: base-go-api
+    env:
+      APP_CONFIG_PROFILE: sqlite
+    cmds:
+      - go run ./cmd/migrate up --kind all
+
+  db:migrate:schema:
+    desc: Apply schema migrations only
+    dir: base-go-api
+    cmds:
+      - go run ./cmd/migrate up --kind schema
+
+  db:migrate:seed:
+    desc: Apply seed migrations only
+    dir: base-go-api
+    cmds:
+      - go run ./cmd/migrate up --kind seed
+
+  db:backup:
+    desc: Create an online SQLite backup; pass CLI flags through CLI_ARGS
+    dir: base-go-api
+    cmds:
+      - go run ./cmd/backup {{.CLI_ARGS}}
+
+  api:
+    desc: Start the Go API
+    dir: base-go-api
+    cmds:
+      - go run ./cmd/api
+
+  api:sqlite:
+    desc: Start the Go API with the SQLite profile
+    dir: base-go-api
+    env:
+      APP_CONFIG_PROFILE: sqlite
+    cmds:
+      - go run ./cmd/api
+
+  web:
+    desc: Start the React development server
+    dir: react-admin
+    cmds:
+      - npm run dev
+
+  dev:
+    desc: Migrate the database and start API and web together
+    deps:
+      - db:migrate
+    cmds:
+      - task --parallel api web
+
+  dev:sqlite:
+    desc: Migrate SQLite and start the SQLite API and web together
+    env:
+      APP_CONFIG_PROFILE: sqlite
+    deps:
+      - db:migrate:sqlite
+    cmds:
+      - task --parallel api:sqlite web
+
+  backend:test:
+    desc: Run backend unit tests
+    dir: base-go-api
+    cmds:
+      - go test ./...
+
+  backend:integration:
+    desc: Run backend PostgreSQL integration tests
+    dir: base-go-api
+    cmds:
+      - go test -tags=integration ./integration -run 'Postgres|Auth|RBAC|SysConfig|Department|Dictionary|Login|File|Notification|UserPage' -count=1
+
+  db:integration:postgres:
+    desc: Run the PostgreSQL database integration contract
+    dir: base-go-api
+    cmds:
+      - go test -tags=integration ./integration -run 'Postgres|Auth|RBAC|SysConfig|Department|Dictionary|Login|File|Notification|UserPage' -count=1
+
+  db:integration:sqlite:
+    desc: Run the file-backed SQLite database integration contract
+    dir: base-go-api
+    cmds:
+      - go test -tags=integration ./integration -run 'SQLite' -count=1
+
+  db:check:
+    desc: Run backend checks and both supported database integration contracts
+    deps:
+      - backend:check
+      - db:integration:postgres
+      - db:integration:sqlite
+
+  backend:check:
+    desc: Run backend tests and static checks
+    dir: base-go-api
+    cmds:
+      - go test ./...
+      - go vet ./...
+
+  frontend:lint:
+    desc: Run frontend lint
+    dir: react-admin
+    cmds:
+      - npm run lint
+
+  frontend:build:
+    desc: Build the frontend
+    dir: react-admin
+    cmds:
+      - npm run build
+
+  check:
+    desc: Run backend and frontend checks
+    deps:
+      - backend:check
+      - frontend:lint
+      - frontend:build
+
+  build:
+    desc: Build backend and frontend
+    deps:
+      - frontend:build
+    dir: base-go-api
+    cmds:
+      - go build ./cmd/api ./cmd/migrate ./cmd/backup
+
+  test:
+    desc: Run the default test suite
+    deps:
+      - backend:test
