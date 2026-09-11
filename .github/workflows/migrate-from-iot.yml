@@ -15,13 +15,32 @@ jobs:
       - name: Checkout target repository
         uses: actions/checkout@v4
         with:
+          path: target
           fetch-depth: 0
 
-      - name: Fetch source iot branch
-        run: |
-          git remote add source https://github.com/EziosWJ/base-project-golang.git
-          git fetch source iot
+      - name: Checkout source iot branch
+        uses: actions/checkout@v4
+        with:
+          repository: EziosWJ/base-project-golang
+          ref: iot
+          path: source
 
-      - name: Replace main with source iot branch
+      - name: Copy iot snapshot into target
         run: |
-          git push --force origin refs/remotes/source/iot:refs/heads/main
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/' \
+            source/ target/
+
+      - name: Commit migrated snapshot
+        working-directory: target
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'chore: migrate snapshot from base-project-golang iot'
+          git push origin main
