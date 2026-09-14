@@ -30,6 +30,19 @@ export type {
 } from "./auth";
 export type { AccountProfile } from "./account";
 export type {
+  AcquisitionChannel,
+  AcquisitionChannelInput,
+  AcquisitionChannelPage,
+  AcquisitionChannelQuery,
+  AcquisitionCommunicationStatus,
+  AcquisitionCurrentState,
+  AcquisitionDevice,
+  AcquisitionDeviceInput,
+  AcquisitionDevicePage,
+  AcquisitionDeviceQuery,
+  FeedProtectorData,
+} from "./acquisition";
+export type {
   FileBatchDeleteRequest,
   FileListQuery,
   FileRecord,

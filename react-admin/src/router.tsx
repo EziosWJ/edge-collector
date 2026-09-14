@@ -2,6 +2,9 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { AppShell } from "@/components/layout/app-shell";
 import { AccountProfilePage } from "@/pages/account-profile";
+import { AcquisitionChannelsPage } from "@/pages/acquisition/channels";
+import { AcquisitionDevicesPage } from "@/pages/acquisition/devices";
+import { AcquisitionRealtimePage } from "@/pages/acquisition/realtime";
 import { ChangePasswordPage } from "@/pages/change-password";
 import { DashboardPage } from "@/pages/dashboard";
 import { DetailDemoPage } from "@/pages/examples/detail-demo";
@@ -81,6 +84,18 @@ export const router = createBrowserRouter([
       {
         path: "system",
         element: <Navigate to="/system/user" replace />,
+      },
+      {
+        path: "acquisition/channel",
+        element: <AcquisitionChannelsPage />,
+      },
+      {
+        path: "acquisition/device",
+        element: <AcquisitionDevicesPage />,
+      },
+      {
+        path: "acquisition/realtime",
+        element: <AcquisitionRealtimePage />,
       },
       {
         path: "system/dept",

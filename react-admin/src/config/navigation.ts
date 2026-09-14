@@ -3,6 +3,9 @@ import {
   FileText,
   LayoutDashboard,
   Bell,
+  Activity,
+  Cable,
+  RadioTower,
   Network,
   PanelLeft,
   Table2,
@@ -31,6 +34,28 @@ export const defaultNavItems: NavItem[] = [
     label: "我的通知",
     path: "/notifications",
     icon: Bell,
+  },
+  {
+    label: "设备采集",
+    path: "/acquisition",
+    icon: RadioTower,
+    children: [
+      {
+        label: "通信通道",
+        path: "/acquisition/channel",
+        icon: Cable,
+      },
+      {
+        label: "设备管理",
+        path: "/acquisition/device",
+        icon: RadioTower,
+      },
+      {
+        label: "实时数据",
+        path: "/acquisition/realtime",
+        icon: Activity,
+      },
+    ],
   },
 
   {
@@ -196,6 +221,10 @@ export const staticRouteTitleMap: Record<string, string> = {
   "/examples/file-upload": "文件上传 Demo",
   "/settings": "系统设置",
   "/system": "系统管理",
+  "/acquisition": "设备采集",
+  "/acquisition/channel": "通信通道",
+  "/acquisition/device": "设备管理",
+  "/acquisition/realtime": "实时数据",
   "/system/user": "用户管理",
   "/system/dept": "部门管理",
   "/system/dict": "字典管理",
