@@ -1,0 +1,45 @@
+logging:
+  level: INFO
+  hex: true
+channels:
+  - name: rtu0
+    protocol: rtu
+    alias: /tmp/modbus-rtu0
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    devices:
+      - devices/feeder_protector_01.yaml
+      - devices/feeder_protector_02.yaml
+  - name: rtu1
+    protocol: rtu
+    alias: /tmp/modbus-rtu1
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    devices:
+      - devices/feeder_protector_01.yaml
+  # Go 业务采集暂不支持下列网络模式；复用开发映射做传输测试。
+  - name: tcp0
+    protocol: tcp
+    host: 127.0.0.1
+    port: 1502
+    devices:
+      - devices/feeder_protector_01.yaml
+      - devices/feeder_protector_02.yaml
+  - name: udp0
+    protocol: udp
+    host: 127.0.0.1
+    port: 1600
+    devices:
+      - devices/feeder_protector_01.yaml
+      - devices/feeder_protector_02.yaml
+  - name: rtu_udp0
+    protocol: rtu_over_udp
+    host: 127.0.0.1
+    port: 1700
+    devices:
+      - devices/feeder_protector_01.yaml
+      - devices/feeder_protector_02.yaml

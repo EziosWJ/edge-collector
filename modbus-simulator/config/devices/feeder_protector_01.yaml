@@ -1,0 +1,58 @@
+# 依据 internal/acquisition/protocol.go 的开发映射，不是厂家确认协议。
+name: 馈电保护器-01
+slave_id: 1
+source: edge-collector-api/internal/acquisition/protocol.go
+behavior:
+  response_delay_ms: 0
+registers:
+  - name: voltage
+    description: 电压，工程值；线上 raw=3000
+    area: holding_register
+    address: 0
+    type: uint16
+    length: 1
+    value: 300
+    scale: 0.1
+    unit: V
+    simulation: {type: fixed}
+  - name: current
+    area: holding_register
+    address: 1
+    type: uint16
+    length: 1
+    value: 12.5
+    scale: 0.1
+    unit: A
+  - name: activePower
+    description: 有功功率；工程单位在当前协议代码中未明确，不作厂家断言
+    area: holding_register
+    address: 2
+    type: uint32
+    length: 2
+    byte_order: big
+    word_order: big
+    value: 123.4
+    scale: 0.1
+  - name: frequency
+    area: holding_register
+    address: 4
+    type: uint16
+    length: 1
+    value: 50
+    scale: 0.01
+    unit: Hz
+  - name: powerFactor
+    area: holding_register
+    address: 5
+    type: uint16
+    length: 1
+    value: 0.98
+    scale: 0.001
+  - name: status
+    description: 原始状态字；0/1 不代表已确认正常/故障语义，bits 暂为空
+    area: holding_register
+    address: 6
+    type: uint16
+    length: 1
+    value: 0
+    bits: {}
