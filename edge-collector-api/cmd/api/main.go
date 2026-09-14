@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	stdlog "log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 
 	_ "github.com/EziosWJ/edge-collector/edge-collector-api/docs"
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/app"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/auth"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/config"
@@ -103,21 +105,49 @@ func main() {
 		os.Exit(1)
 	}
 
+	acquisitionService, err := acquisition.NewService(acquisition.NewRepository(database.GORM))
+	if err != nil {
+		slog.Error("build acquisition service", "error", err)
+		os.Exit(1)
+	}
+	acquisitionState := acquisition.NewCurrentStateStore()
+	channels, devices, err := acquisitionService.EnabledConfiguration(context.Background())
+	if err != nil {
+		slog.Error("load acquisition configuration", "error", err)
+		os.Exit(1)
+	}
+	acquisitionRuntime, err := acquisition.NewRuntime(channels, devices, acquisitionState, acquisition.NewModbusSessionFactory(), stdlog.New(os.Stderr, "acquisition: ", stdlog.LstdFlags))
+	if err != nil {
+		slog.Error("build acquisition runtime", "error", err)
+		os.Exit(1)
+	}
+
 	application, err := app.New(*cfg, database, app.Dependencies{
-		Auth:         authService,
-		RBAC:         rbacService,
-		Department:   deptService,
-		User:         userService,
-		Dictionary:   dictionaryService,
-		SysConfig:    configService,
-		File:         fileService,
-		Log:          logService,
-		Notification: notificationService,
+		Acquisition:      acquisitionService,
+		AcquisitionState: acquisitionState,
+		Auth:             authService,
+		RBAC:             rbacService,
+		Department:       deptService,
+		User:             userService,
+		Dictionary:       dictionaryService,
+		SysConfig:        configService,
+		File:             fileService,
+		Log:              logService,
+		Notification:     notificationService,
 	})
 	if err != nil {
 		slog.Error("build application", "error", err)
 		os.Exit(1)
 	}
+
+	runtimeContext, cancelRuntime := context.WithCancel(context.Background())
+	runtimeDone := make(chan struct{})
+	go func() {
+		defer close(runtimeDone)
+		if err := acquisitionRuntime.Run(runtimeContext); err != nil && !errors.Is(err, context.Canceled) {
+			application.Logger.Error("acquisition runtime stopped", "error", err)
+		}
+	}()
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Address,
@@ -139,6 +169,8 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	cancelRuntime()
+	<-runtimeDone
 
 	shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()

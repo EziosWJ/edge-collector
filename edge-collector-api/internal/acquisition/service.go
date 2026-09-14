@@ -1,0 +1,156 @@
+package acquisition
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/audit"
+)
+
+var (
+	ErrNotFound          = errors.New("数据不存在")
+	ErrInvalid           = errors.New("参数错误")
+	ErrConflict          = errors.New("采集配置已存在")
+	ErrChannelHasDevices = errors.New("通信通道已关联设备，禁止删除")
+	ErrUnsupportedDevice = errors.New("不支持的设备类型")
+)
+
+type Service struct{ store Store }
+
+func NewService(store Store) (*Service, error) {
+	if store == nil {
+		return nil, fmt.Errorf("acquisition store is required")
+	}
+	return &Service{store: store}, nil
+}
+
+func (s *Service) PageChannels(ctx context.Context, query ChannelQuery) (Page[Channel], error) {
+	return s.store.PageChannels(ctx, query)
+}
+
+func (s *Service) FindChannel(ctx context.Context, id int64) (*Channel, error) {
+	return s.store.FindChannel(ctx, id)
+}
+
+func (s *Service) CreateChannel(ctx context.Context, meta AuditMetadata, input ChannelInput) (Channel, error) {
+	if err := validateChannel(input); err != nil {
+		return Channel{}, err
+	}
+	return s.store.CreateChannel(ctx, channelFrom(input, 0), auditEvent(meta, "acquisition.channel.create", "采集通信通道", 0))
+}
+
+func (s *Service) UpdateChannel(ctx context.Context, meta AuditMetadata, id int64, input ChannelInput) (Channel, error) {
+	if err := validateChannel(input); err != nil {
+		return Channel{}, err
+	}
+	if _, err := s.store.FindChannel(ctx, id); err != nil {
+		return Channel{}, err
+	}
+	return s.store.UpdateChannel(ctx, channelFrom(input, id), auditEvent(meta, "acquisition.channel.update", "采集通信通道", id))
+}
+
+func (s *Service) DeleteChannel(ctx context.Context, meta AuditMetadata, id int64) error {
+	if _, err := s.store.FindChannel(ctx, id); err != nil {
+		return err
+	}
+	count, err := s.store.CountDevicesByChannel(ctx, id)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrChannelHasDevices
+	}
+	return s.store.DeleteChannel(ctx, id, auditEvent(meta, "acquisition.channel.delete", "采集通信通道", id))
+}
+
+func (s *Service) PageDevices(ctx context.Context, query DeviceQuery) (Page[Device], error) {
+	return s.store.PageDevices(ctx, query)
+}
+
+func (s *Service) FindDevice(ctx context.Context, id int64) (*Device, error) {
+	return s.store.FindDevice(ctx, id)
+}
+
+func (s *Service) CreateDevice(ctx context.Context, meta AuditMetadata, input DeviceInput) (Device, error) {
+	if err := validateDevice(input); err != nil {
+		return Device{}, err
+	}
+	if _, err := s.store.FindChannel(ctx, input.ChannelID); err != nil {
+		return Device{}, err
+	}
+	return s.createDevice(ctx, meta, input, 0)
+}
+
+func (s *Service) UpdateDevice(ctx context.Context, meta AuditMetadata, id int64, input DeviceInput) (Device, error) {
+	if err := validateDevice(input); err != nil {
+		return Device{}, err
+	}
+	if _, err := s.store.FindDevice(ctx, id); err != nil {
+		return Device{}, err
+	}
+	if _, err := s.store.FindChannel(ctx, input.ChannelID); err != nil {
+		return Device{}, err
+	}
+	return s.createDevice(ctx, meta, input, id)
+}
+
+func (s *Service) createDevice(ctx context.Context, meta AuditMetadata, input DeviceInput, id int64) (Device, error) {
+	exists, err := s.store.SlaveExists(ctx, input.ChannelID, input.SlaveID, id)
+	if err != nil {
+		return Device{}, err
+	}
+	if exists {
+		return Device{}, ErrConflict
+	}
+	value := deviceFrom(input, id)
+	if id == 0 {
+		return s.store.CreateDevice(ctx, value, auditEvent(meta, "acquisition.device.create", "采集设备", 0))
+	}
+	return s.store.UpdateDevice(ctx, value, auditEvent(meta, "acquisition.device.update", "采集设备", id))
+}
+
+func (s *Service) DeleteDevice(ctx context.Context, meta AuditMetadata, id int64) error {
+	if _, err := s.store.FindDevice(ctx, id); err != nil {
+		return err
+	}
+	return s.store.DeleteDevice(ctx, id, auditEvent(meta, "acquisition.device.delete", "采集设备", id))
+}
+
+func (s *Service) EnabledConfiguration(ctx context.Context) ([]Channel, []Device, error) {
+	return s.store.EnabledConfiguration(ctx)
+}
+
+type AuditEvent = audit.Event
+type AuditMetadata = audit.Metadata
+
+func validateChannel(input ChannelInput) error {
+	input.Parity = strings.ToUpper(strings.TrimSpace(input.Parity))
+	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Port) == "" || input.BaudRate <= 0 || (input.DataBits != 7 && input.DataBits != 8) || (input.StopBits != 1 && input.StopBits != 2) || (input.Parity != "N" && input.Parity != "E" && input.Parity != "O") || input.TimeoutMS <= 0 || (input.Enabled != Enabled && input.Enabled != Disabled) {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func validateDevice(input DeviceInput) error {
+	if strings.TrimSpace(input.Name) == "" || input.DeviceType != DeviceTypeFeedProtector || input.ChannelID < 1 || input.SlaveID < 1 || input.SlaveID > 247 || input.PollIntervalMS <= 0 || input.FailureThreshold <= 0 || (input.Enabled != Enabled && input.Enabled != Disabled) {
+		if input.DeviceType != DeviceTypeFeedProtector {
+			return ErrUnsupportedDevice
+		}
+		return ErrInvalid
+	}
+	return nil
+}
+
+func channelFrom(input ChannelInput, id int64) Channel {
+	return Channel{ID: id, Name: strings.TrimSpace(input.Name), Port: strings.TrimSpace(input.Port), BaudRate: input.BaudRate, DataBits: input.DataBits, StopBits: input.StopBits, Parity: strings.ToUpper(strings.TrimSpace(input.Parity)), TimeoutMS: input.TimeoutMS, Enabled: input.Enabled}
+}
+
+func deviceFrom(input DeviceInput, id int64) Device {
+	return Device{ID: id, Name: strings.TrimSpace(input.Name), DeviceType: input.DeviceType, ChannelID: input.ChannelID, SlaveID: input.SlaveID, PollIntervalMS: input.PollIntervalMS, FailureThreshold: input.FailureThreshold, Enabled: input.Enabled}
+}
+
+func auditEvent(meta AuditMetadata, action, resource string, id int64) audit.Event {
+	return audit.Event{Action: action, Resource: resource, ResourceID: id, Summary: action, Metadata: meta}
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/auth"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/config"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/dept"
@@ -25,15 +26,17 @@ import (
 // Core management services are required; notification routes are enabled when
 // the optional Notification service is supplied.
 type Dependencies struct {
-	Auth         *auth.Service
-	RBAC         *rbac.Service
-	Department   *dept.Service
-	User         *usermgmt.Service
-	Dictionary   *dictionary.Service
-	SysConfig    *sysconfig.Service
-	File         *filemgmt.Service
-	Log          *logmgmt.Service
-	Notification *notification.Service
+	Acquisition      *acquisition.Service
+	AcquisitionState *acquisition.CurrentStateStore
+	Auth             *auth.Service
+	RBAC             *rbac.Service
+	Department       *dept.Service
+	User             *usermgmt.Service
+	Dictionary       *dictionary.Service
+	SysConfig        *sysconfig.Service
+	File             *filemgmt.Service
+	Log              *logmgmt.Service
+	Notification     *notification.Service
 }
 
 // Application is the assembled HTTP application and its process logger.
@@ -138,6 +141,16 @@ func New(cfg config.Config, readiness platformhttp.ReadinessChecker, deps Depend
 			return nil, fmt.Errorf("create notification handler: %w", err)
 		}
 		notification.RegisterRoutes(system, notificationHandler)
+	}
+
+	if deps.Acquisition != nil {
+		acquisitionHandler, err := acquisition.NewHandler(deps.Acquisition, deps.AcquisitionState)
+		if err != nil {
+			return nil, fmt.Errorf("create acquisition handler: %w", err)
+		}
+		acquisitionGroup := router.Group("/api/v1/acquisition")
+		acquisitionGroup.Use(auth.BearerMiddleware(deps.Auth))
+		acquisition.RegisterRoutes(acquisitionGroup, acquisitionHandler)
 	}
 
 	if cfg.Environment == config.EnvironmentDev && cfg.Swagger.Enabled {

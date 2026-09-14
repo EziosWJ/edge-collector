@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/audit"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/auth"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/config"
@@ -49,14 +50,16 @@ func testConfig(environment string, swaggerEnabled bool) config.Config {
 // fakeStores provide enough in-memory state to construct every real business
 // service without a database.
 type fakeStores struct {
-	auth auth.Store
-	file filemgmt.Storage
+	auth        auth.Store
+	file        filemgmt.Storage
+	acquisition acquisition.Store
 }
 
 func newFakeStores() *fakeStores {
 	return &fakeStores{
-		auth: &authMemoryStore{users: map[string]auth.User{}, sessions: map[string]auth.AuthSession{}},
-		file: memoryStorage{},
+		auth:        &authMemoryStore{users: map[string]auth.User{}, sessions: map[string]auth.AuthSession{}},
+		file:        memoryStorage{},
+		acquisition: emptyAcquisitionStore{},
 	}
 }
 
@@ -90,15 +93,21 @@ func (f *fakeStores) deps() Dependencies {
 	if err != nil {
 		panic(err)
 	}
+	acquisitionService, err := acquisition.NewService(f.acquisition)
+	if err != nil {
+		panic(err)
+	}
 	return Dependencies{
-		Auth:       authService,
-		RBAC:       rbacService,
-		Department: deptService,
-		User:       userService,
-		Dictionary: dictionaryService,
-		SysConfig:  configService,
-		File:       fileService,
-		Log:        logService,
+		Acquisition:      acquisitionService,
+		AcquisitionState: acquisition.NewCurrentStateStore(),
+		Auth:             authService,
+		RBAC:             rbacService,
+		Department:       deptService,
+		User:             userService,
+		Dictionary:       dictionaryService,
+		SysConfig:        configService,
+		File:             fileService,
+		Log:              logService,
 	}
 }
 
@@ -133,6 +142,7 @@ func TestBuildRegistersAllSystemManagementRoutes(t *testing.T) {
 		"/api/system/config/page",
 		"/api/system/file/page",
 		"/api/system/login-log/page",
+		"/api/v1/acquisition/channels",
 	} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -450,6 +460,44 @@ func (emptyLogStore) FindOperLog(context.Context, int64) (*logmgmt.OperLogDetail
 	return nil, nil
 }
 func (emptyLogStore) ClearOperLogs(context.Context, audit.Event) error { return nil }
+
+type emptyAcquisitionStore struct{}
+
+func (emptyAcquisitionStore) PageChannels(context.Context, acquisition.ChannelQuery) (acquisition.Page[acquisition.Channel], error) {
+	return acquisition.Page[acquisition.Channel]{}, nil
+}
+func (emptyAcquisitionStore) FindChannel(context.Context, int64) (*acquisition.Channel, error) {
+	return nil, acquisition.ErrNotFound
+}
+func (emptyAcquisitionStore) CreateChannel(context.Context, acquisition.Channel, audit.Event) (acquisition.Channel, error) {
+	return acquisition.Channel{}, nil
+}
+func (emptyAcquisitionStore) UpdateChannel(context.Context, acquisition.Channel, audit.Event) (acquisition.Channel, error) {
+	return acquisition.Channel{}, nil
+}
+func (emptyAcquisitionStore) DeleteChannel(context.Context, int64, audit.Event) error { return nil }
+func (emptyAcquisitionStore) CountDevicesByChannel(context.Context, int64) (int64, error) {
+	return 0, nil
+}
+func (emptyAcquisitionStore) PageDevices(context.Context, acquisition.DeviceQuery) (acquisition.Page[acquisition.Device], error) {
+	return acquisition.Page[acquisition.Device]{}, nil
+}
+func (emptyAcquisitionStore) FindDevice(context.Context, int64) (*acquisition.Device, error) {
+	return nil, acquisition.ErrNotFound
+}
+func (emptyAcquisitionStore) SlaveExists(context.Context, int64, uint8, int64) (bool, error) {
+	return false, nil
+}
+func (emptyAcquisitionStore) CreateDevice(context.Context, acquisition.Device, audit.Event) (acquisition.Device, error) {
+	return acquisition.Device{}, nil
+}
+func (emptyAcquisitionStore) UpdateDevice(context.Context, acquisition.Device, audit.Event) (acquisition.Device, error) {
+	return acquisition.Device{}, nil
+}
+func (emptyAcquisitionStore) DeleteDevice(context.Context, int64, audit.Event) error { return nil }
+func (emptyAcquisitionStore) EnabledConfiguration(context.Context) ([]acquisition.Channel, []acquisition.Device, error) {
+	return nil, nil, nil
+}
 
 type memoryStorage struct{}
 

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/app"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/auth"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/config"
@@ -137,6 +138,26 @@ func TestSQLiteSharedHTTPBusinessContract(t *testing.T) {
 	failedLogin := serveJSON(router, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"wrong"}`, "")
 	assertEnvelopeCode(t, failedLogin, http.StatusOK, 400, "用户名或密码错误")
 	adminToken := loginAdmin(t, router)
+	createdChannel := serveJSON(router, http.MethodPost, "/api/v1/acquisition/channels", `{"name":"SQLite RS485","port":"/dev/pts/10","baudRate":19200,"dataBits":8,"stopBits":2,"parity":"N","timeoutMs":300,"enabled":1}`, adminToken)
+	assertEnvelopeCode(t, createdChannel, http.StatusOK, 200, "success")
+	channelPage := serveJSON(router, http.MethodGet, "/api/v1/acquisition/channels?page=1&pageSize=20", "", adminToken)
+	if channelPage.Code != http.StatusOK || !strings.Contains(channelPage.Body.String(), `"name":"SQLite RS485"`) {
+		t.Fatalf("SQLite acquisition channels = %d %s", channelPage.Code, channelPage.Body.String())
+	}
+	createdDevice := serveJSON(router, http.MethodPost, "/api/v1/acquisition/devices", `{"name":"SQLite馈电保护器","deviceType":"FEED_PROTECTOR","channelId":1,"slaveId":1,"pollIntervalMs":1000,"failureThreshold":3,"enabled":1}`, adminToken)
+	assertEnvelopeCode(t, createdDevice, http.StatusOK, 200, "success")
+	devicePage := serveJSON(router, http.MethodGet, "/api/v1/acquisition/devices?page=1&pageSize=20", "", adminToken)
+	if devicePage.Code != http.StatusOK || !strings.Contains(devicePage.Body.String(), `"name":"SQLite馈电保护器"`) {
+		t.Fatalf("SQLite acquisition devices = %d %s", devicePage.Code, devicePage.Body.String())
+	}
+	states := serveJSON(router, http.MethodGet, "/api/v1/acquisition/states", "", adminToken)
+	assertEnvelopeCode(t, states, http.StatusOK, 200, "success")
+	blockedChannelDelete := serveJSON(router, http.MethodDelete, "/api/v1/acquisition/channels/1", "", adminToken)
+	assertEnvelopeCode(t, blockedChannelDelete, http.StatusBadRequest, 400, acquisition.ErrChannelHasDevices.Error())
+	deletedDevice := serveJSON(router, http.MethodDelete, "/api/v1/acquisition/devices/1", "", adminToken)
+	assertEnvelopeCode(t, deletedDevice, http.StatusOK, 200, "success")
+	deletedChannel := serveJSON(router, http.MethodDelete, "/api/v1/acquisition/channels/1", "", adminToken)
+	assertEnvelopeCode(t, deletedChannel, http.StatusOK, 200, "success")
 	me := serveJSON(router, http.MethodGet, "/api/auth/me", "", adminToken)
 	if me.Code != http.StatusOK || !strings.Contains(me.Body.String(), `"roleCode":"ADMIN"`) {
 		t.Fatalf("SQLite current user = %d %s", me.Code, me.Body.String())
@@ -469,7 +490,12 @@ func sqliteDependencies(t *testing.T, database *platformdatabase.Database, stora
 	if err != nil {
 		t.Fatalf("create SQLite notification service: %v", err)
 	}
+	acquisitionService, err := acquisition.NewService(acquisition.NewRepository(database.GORM))
+	if err != nil {
+		t.Fatalf("create SQLite acquisition service: %v", err)
+	}
 	return app.Dependencies{
+		Acquisition: acquisitionService, AcquisitionState: acquisition.NewCurrentStateStore(),
 		Auth: authService, RBAC: rbacService, Department: deptService, User: userService,
 		Dictionary: dictionaryService, SysConfig: configService, File: fileService,
 		Log: logService, Notification: notificationService,

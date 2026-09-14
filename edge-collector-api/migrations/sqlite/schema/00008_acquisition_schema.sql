@@ -1,0 +1,54 @@
+-- +goose Up
+CREATE TABLE acquisition_channel (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(100) NOT NULL,
+    port VARCHAR(255) NOT NULL,
+    baud_rate INTEGER NOT NULL DEFAULT 19200,
+    data_bits INTEGER NOT NULL DEFAULT 8,
+    stop_bits INTEGER NOT NULL DEFAULT 2,
+    parity VARCHAR(1) NOT NULL DEFAULT 'N',
+    timeout_ms INTEGER NOT NULL DEFAULT 300,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT ck_acquisition_channel_name_not_blank CHECK (length(trim(name)) > 0),
+    CONSTRAINT ck_acquisition_channel_port_not_blank CHECK (length(trim(port)) > 0),
+    CONSTRAINT ck_acquisition_channel_baud_rate CHECK (baud_rate > 0),
+    CONSTRAINT ck_acquisition_channel_data_bits CHECK (data_bits IN (7, 8)),
+    CONSTRAINT ck_acquisition_channel_stop_bits CHECK (stop_bits IN (1, 2)),
+    CONSTRAINT ck_acquisition_channel_parity CHECK (parity IN ('N', 'E', 'O')),
+    CONSTRAINT ck_acquisition_channel_timeout CHECK (timeout_ms > 0),
+    CONSTRAINT ck_acquisition_channel_enabled CHECK (enabled IN (0, 1)),
+    CONSTRAINT ck_acquisition_channel_deleted CHECK (deleted IN (0, 1))
+);
+
+CREATE TABLE acquisition_device (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(100) NOT NULL,
+    device_type VARCHAR(50) NOT NULL,
+    channel_id INTEGER NOT NULL,
+    slave_id INTEGER NOT NULL,
+    poll_interval_ms INTEGER NOT NULL DEFAULT 1000,
+    failure_threshold INTEGER NOT NULL DEFAULT 3,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT fk_acquisition_device_channel FOREIGN KEY (channel_id) REFERENCES acquisition_channel (id) ON DELETE RESTRICT,
+    CONSTRAINT ck_acquisition_device_name_not_blank CHECK (length(trim(name)) > 0),
+    CONSTRAINT ck_acquisition_device_type CHECK (device_type = 'FEED_PROTECTOR'),
+    CONSTRAINT ck_acquisition_device_slave_id CHECK (slave_id BETWEEN 1 AND 247),
+    CONSTRAINT ck_acquisition_device_poll_interval CHECK (poll_interval_ms > 0),
+    CONSTRAINT ck_acquisition_device_failure_threshold CHECK (failure_threshold > 0),
+    CONSTRAINT ck_acquisition_device_enabled CHECK (enabled IN (0, 1)),
+    CONSTRAINT ck_acquisition_device_deleted CHECK (deleted IN (0, 1))
+);
+
+CREATE INDEX idx_acquisition_channel_enabled ON acquisition_channel (enabled, deleted, id);
+CREATE INDEX idx_acquisition_device_channel ON acquisition_device (channel_id, enabled, deleted, id);
+CREATE UNIQUE INDEX uk_acquisition_device_channel_slave ON acquisition_device (channel_id, slave_id) WHERE deleted = 0;
+
+-- +goose Down
+DROP TABLE IF EXISTS acquisition_device;
+DROP TABLE IF EXISTS acquisition_channel;
