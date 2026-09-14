@@ -36,6 +36,9 @@
 - **控制指令**：上级平台通过 MQTT 下发、要求 Edge Collector 对目标设备执行的操作。
 - **MQTT 上报**：Edge Collector 作为 MQTT Client 向上级 Broker 发送实时数据、告警、设备状态或控制结果。
 - **Modbus Server**：Edge Collector 面向其他设备或系统提供的 Modbus 数据服务，其对外地址不要求等同于现场设备原始寄存器地址。
+- **Modbus 模拟器**：供开发和协议联调用的纯软件 Modbus 设备，不代表真实厂家的寄存器表或设备语义。
+- **RTU over UDP**：把完整 Modbus RTU 帧作为单个 UDP Payload 传输的通信方式；它与 MBAP + PDU over UDP 分开处理。
+- **PTY alias**：模拟器为动态 `/dev/pts/N` slave 维护的固定软链接，供 Go 采集程序使用。
 
 > 当前需求基线见 `docs/requirements/edge-collector-requirements.md`。设备 Driver、调度器、任务类型、缓存结构等尚未确认，不作为当前领域词汇预先写入。
 
