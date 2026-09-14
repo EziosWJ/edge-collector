@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/audit"
@@ -17,13 +18,26 @@ var (
 	ErrUnsupportedDevice = errors.New("不支持的设备类型")
 )
 
-type Service struct{ store Store }
+type RuntimeRefresher func(context.Context) error
+
+type Service struct {
+	store     Store
+	refresher RuntimeRefresher
+}
 
 func NewService(store Store) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("acquisition store is required")
 	}
 	return &Service{store: store}, nil
+}
+
+// SetRuntimeRefresher connects successful configuration writes to the running
+// acquisition runtime. The database transaction remains the source of truth;
+// a refresh failure is logged by the refresher and never changes the write
+// result returned to the caller.
+func (s *Service) SetRuntimeRefresher(refresher RuntimeRefresher) {
+	s.refresher = refresher
 }
 
 func (s *Service) PageChannels(ctx context.Context, query ChannelQuery) (Page[Channel], error) {
@@ -38,7 +52,11 @@ func (s *Service) CreateChannel(ctx context.Context, meta AuditMetadata, input C
 	if err := validateChannel(input); err != nil {
 		return Channel{}, err
 	}
-	return s.store.CreateChannel(ctx, channelFrom(input, 0), auditEvent(meta, "acquisition.channel.create", "采集通信通道", 0))
+	value, err := s.store.CreateChannel(ctx, channelFrom(input, 0), auditEvent(meta, "acquisition.channel.create", "采集通信通道", 0))
+	if err == nil {
+		s.notifyRuntime(ctx)
+	}
+	return value, err
 }
 
 func (s *Service) UpdateChannel(ctx context.Context, meta AuditMetadata, id int64, input ChannelInput) (Channel, error) {
@@ -48,7 +66,11 @@ func (s *Service) UpdateChannel(ctx context.Context, meta AuditMetadata, id int6
 	if _, err := s.store.FindChannel(ctx, id); err != nil {
 		return Channel{}, err
 	}
-	return s.store.UpdateChannel(ctx, channelFrom(input, id), auditEvent(meta, "acquisition.channel.update", "采集通信通道", id))
+	value, err := s.store.UpdateChannel(ctx, channelFrom(input, id), auditEvent(meta, "acquisition.channel.update", "采集通信通道", id))
+	if err == nil {
+		s.notifyRuntime(ctx)
+	}
+	return value, err
 }
 
 func (s *Service) DeleteChannel(ctx context.Context, meta AuditMetadata, id int64) error {
@@ -62,7 +84,11 @@ func (s *Service) DeleteChannel(ctx context.Context, meta AuditMetadata, id int6
 	if count > 0 {
 		return ErrChannelHasDevices
 	}
-	return s.store.DeleteChannel(ctx, id, auditEvent(meta, "acquisition.channel.delete", "采集通信通道", id))
+	err = s.store.DeleteChannel(ctx, id, auditEvent(meta, "acquisition.channel.delete", "采集通信通道", id))
+	if err == nil {
+		s.notifyRuntime(ctx)
+	}
+	return err
 }
 
 func (s *Service) PageDevices(ctx context.Context, query DeviceQuery) (Page[Device], error) {
@@ -106,16 +132,28 @@ func (s *Service) createDevice(ctx context.Context, meta AuditMetadata, input De
 	}
 	value := deviceFrom(input, id)
 	if id == 0 {
-		return s.store.CreateDevice(ctx, value, auditEvent(meta, "acquisition.device.create", "采集设备", 0))
+		created, err := s.store.CreateDevice(ctx, value, auditEvent(meta, "acquisition.device.create", "采集设备", 0))
+		if err == nil {
+			s.notifyRuntime(ctx)
+		}
+		return created, err
 	}
-	return s.store.UpdateDevice(ctx, value, auditEvent(meta, "acquisition.device.update", "采集设备", id))
+	updated, err := s.store.UpdateDevice(ctx, value, auditEvent(meta, "acquisition.device.update", "采集设备", id))
+	if err == nil {
+		s.notifyRuntime(ctx)
+	}
+	return updated, err
 }
 
 func (s *Service) DeleteDevice(ctx context.Context, meta AuditMetadata, id int64) error {
 	if _, err := s.store.FindDevice(ctx, id); err != nil {
 		return err
 	}
-	return s.store.DeleteDevice(ctx, id, auditEvent(meta, "acquisition.device.delete", "采集设备", id))
+	err := s.store.DeleteDevice(ctx, id, auditEvent(meta, "acquisition.device.delete", "采集设备", id))
+	if err == nil {
+		s.notifyRuntime(ctx)
+	}
+	return err
 }
 
 func (s *Service) EnabledConfiguration(ctx context.Context) ([]Channel, []Device, error) {
@@ -127,7 +165,7 @@ type AuditMetadata = audit.Metadata
 
 func validateChannel(input ChannelInput) error {
 	input.Parity = strings.ToUpper(strings.TrimSpace(input.Parity))
-	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Port) == "" || input.BaudRate <= 0 || (input.DataBits != 7 && input.DataBits != 8) || (input.StopBits != 1 && input.StopBits != 2) || (input.Parity != "N" && input.Parity != "E" && input.Parity != "O") || input.TimeoutMS <= 0 || (input.Enabled != Enabled && input.Enabled != Disabled) {
+	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Port) == "" || input.BaudRate <= 0 || (input.DataBits != 7 && input.DataBits != 8) || (input.StopBits != 1 && input.StopBits != 2) || (input.Parity != "N" && input.Parity != "E" && input.Parity != "O") || input.TimeoutMS <= 0 || input.InterRequestDelayMS < 0 || input.InterRequestDelayMS > 60000 || (input.Enabled != Enabled && input.Enabled != Disabled) {
 		return ErrInvalid
 	}
 	return nil
@@ -144,7 +182,7 @@ func validateDevice(input DeviceInput) error {
 }
 
 func channelFrom(input ChannelInput, id int64) Channel {
-	return Channel{ID: id, Name: strings.TrimSpace(input.Name), Port: strings.TrimSpace(input.Port), BaudRate: input.BaudRate, DataBits: input.DataBits, StopBits: input.StopBits, Parity: strings.ToUpper(strings.TrimSpace(input.Parity)), TimeoutMS: input.TimeoutMS, Enabled: input.Enabled}
+	return Channel{ID: id, Name: strings.TrimSpace(input.Name), Port: strings.TrimSpace(input.Port), BaudRate: input.BaudRate, DataBits: input.DataBits, StopBits: input.StopBits, Parity: strings.ToUpper(strings.TrimSpace(input.Parity)), TimeoutMS: input.TimeoutMS, InterRequestDelayMS: input.InterRequestDelayMS, Enabled: input.Enabled}
 }
 
 func deviceFrom(input DeviceInput, id int64) Device {
@@ -153,4 +191,13 @@ func deviceFrom(input DeviceInput, id int64) Device {
 
 func auditEvent(meta AuditMetadata, action, resource string, id int64) audit.Event {
 	return audit.Event{Action: action, Resource: resource, ResourceID: id, Summary: action, Metadata: meta}
+}
+
+func (s *Service) notifyRuntime(ctx context.Context) {
+	if s.refresher == nil {
+		return
+	}
+	if err := s.refresher(ctx); err != nil {
+		log.Printf("采集运行时刷新失败: %v", err)
+	}
 }

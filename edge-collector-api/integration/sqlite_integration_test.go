@@ -138,8 +138,13 @@ func TestSQLiteSharedHTTPBusinessContract(t *testing.T) {
 	failedLogin := serveJSON(router, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"wrong"}`, "")
 	assertEnvelopeCode(t, failedLogin, http.StatusOK, 400, "用户名或密码错误")
 	adminToken := loginAdmin(t, router)
-	createdChannel := serveJSON(router, http.MethodPost, "/api/v1/acquisition/channels", `{"name":"SQLite RS485","port":"/dev/pts/10","baudRate":19200,"dataBits":8,"stopBits":2,"parity":"N","timeoutMs":300,"enabled":1}`, adminToken)
+	invalidDelayChannel := serveJSON(router, http.MethodPost, "/api/v1/acquisition/channels", `{"name":"Invalid delay","port":"/dev/pts/11","baudRate":19200,"dataBits":8,"stopBits":2,"parity":"N","timeoutMs":300,"interRequestDelayMs":60001,"enabled":1}`, adminToken)
+	assertEnvelopeCode(t, invalidDelayChannel, http.StatusBadRequest, 400, acquisition.ErrInvalid.Error())
+	createdChannel := serveJSON(router, http.MethodPost, "/api/v1/acquisition/channels", `{"name":"SQLite RS485","port":"/dev/pts/10","baudRate":19200,"dataBits":8,"stopBits":2,"parity":"N","timeoutMs":300,"interRequestDelayMs":25,"enabled":1}`, adminToken)
 	assertEnvelopeCode(t, createdChannel, http.StatusOK, 200, "success")
+	if !strings.Contains(createdChannel.Body.String(), `"interRequestDelayMs":25`) {
+		t.Fatalf("SQLite created channel missing interRequestDelayMs: %s", createdChannel.Body.String())
+	}
 	channelPage := serveJSON(router, http.MethodGet, "/api/v1/acquisition/channels?page=1&pageSize=20", "", adminToken)
 	if channelPage.Code != http.StatusOK || !strings.Contains(channelPage.Body.String(), `"name":"SQLite RS485"`) {
 		t.Fatalf("SQLite acquisition channels = %d %s", channelPage.Code, channelPage.Body.String())

@@ -47,6 +47,28 @@ func NewCurrentStateStore() *CurrentStateStore {
 	return &CurrentStateStore{states: make(map[int64]CurrentState)}
 }
 
+func (s *CurrentStateStore) Ensure(device Device) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.states[device.ID]
+	if ok {
+		state.DeviceName = device.Name
+		state.ChannelID = device.ChannelID
+		state.SlaveID = device.SlaveID
+		s.states[device.ID] = state
+		return
+	}
+	s.states[device.ID] = CurrentState{
+		DeviceID:       device.ID,
+		DeviceName:     device.Name,
+		ChannelID:      device.ChannelID,
+		SlaveID:        device.SlaveID,
+		FieldValidity:  make(map[string]bool),
+		FieldUpdatedAt: make(map[string]time.Time),
+		Status:         StatusInitial,
+	}
+}
+
 func (s *CurrentStateStore) Record(device Device, reading FeedProtectorReading, readErr error, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -115,6 +137,12 @@ func (s *CurrentStateStore) Get(deviceID int64) (CurrentState, bool) {
 		return CurrentState{}, false
 	}
 	return cloneState(state), true
+}
+
+func (s *CurrentStateStore) Remove(deviceID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.states, deviceID)
 }
 
 func (s *CurrentStateStore) List() []CurrentState {

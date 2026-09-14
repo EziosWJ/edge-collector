@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPollChannelOnceContinuesAfterOneDeviceFails(t *testing.T) {
@@ -41,6 +42,80 @@ func TestPollChannelOnceContinuesAfterOneDeviceFails(t *testing.T) {
 
 	if got, want := session.units(), []uint8{1, 2, 3}; !equalUint8(got, want) {
 		t.Errorf("slave call order = %v, want %v", got, want)
+	}
+}
+
+func TestRuntimeRefreshRemovesDisabledDeviceState(t *testing.T) {
+	store := NewCurrentStateStore()
+	session := &fakeModbusSession{
+		registers: map[uint8][]uint16{
+			1: {2200, 100, 0, 1000, 5000, 980, 1},
+		},
+	}
+	channel := Channel{ID: 9, Enabled: Enabled}
+	device := Device{ID: 1, Name: "设备 1", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, PollIntervalMS: 60000, FailureThreshold: 3}
+
+	var mu sync.Mutex
+	enabled := true
+	loader := func(context.Context) ([]Channel, []Device, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !enabled {
+			return nil, nil, nil
+		}
+		return []Channel{channel}, []Device{device}, nil
+	}
+	runtime, err := NewRuntime([]Channel{channel}, []Device{device}, store, func(Channel) (ModbusSession, error) {
+		return session, nil
+	}, nil, loader)
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if state, ok := store.Get(device.ID); ok && state.Status == StatusOnline {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("device did not become online")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	mu.Lock()
+	enabled = false
+	mu.Unlock()
+	if err := runtime.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	deadline = time.After(2 * time.Second)
+	for {
+		if _, ok := store.Get(device.ID); !ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("disabled device state was not removed")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runtime error = %v, want context cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime did not stop")
 	}
 }
 

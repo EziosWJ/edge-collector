@@ -116,11 +116,12 @@ func main() {
 		slog.Error("load acquisition configuration", "error", err)
 		os.Exit(1)
 	}
-	acquisitionRuntime, err := acquisition.NewRuntime(channels, devices, acquisitionState, acquisition.NewModbusSessionFactory(), stdlog.New(os.Stderr, "acquisition: ", stdlog.LstdFlags))
+	acquisitionRuntime, err := acquisition.NewRuntime(channels, devices, acquisitionState, acquisition.NewModbusSessionFactory(), stdlog.New(os.Stderr, "acquisition: ", stdlog.LstdFlags), acquisitionService.EnabledConfiguration)
 	if err != nil {
 		slog.Error("build acquisition runtime", "error", err)
 		os.Exit(1)
 	}
+	acquisitionService.SetRuntimeRefresher(acquisitionRuntime.Refresh)
 
 	application, err := app.New(*cfg, database, app.Dependencies{
 		Acquisition:      acquisitionService,

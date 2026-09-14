@@ -61,3 +61,17 @@ func TestCurrentStateStoreKeepsPartialValuesAndMarksOffline(t *testing.T) {
 		t.Errorf("LastSuccessAt = %v, want %v", state.LastSuccessAt, recoveredAt)
 	}
 }
+
+func TestCurrentStateStoreRemovesDisabledDevice(t *testing.T) {
+	store := NewCurrentStateStore()
+	device := Device{ID: 8, Name: "馈电保护器 8", ChannelID: 2, SlaveID: 4}
+	store.Ensure(device)
+	if _, ok := store.Get(device.ID); !ok {
+		t.Fatal("state does not exist after Ensure")
+	}
+
+	store.Remove(device.ID)
+	if _, ok := store.Get(device.ID); ok {
+		t.Fatal("state still exists after Remove")
+	}
+}

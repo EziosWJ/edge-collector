@@ -4106,6 +4106,9 @@ const docTemplate = `{
                 "enabled": {
                     "type": "integer"
                 },
+                "interRequestDelayMs": {
+                    "type": "integer"
+                },
                 "name": {
                     "type": "string"
                 },

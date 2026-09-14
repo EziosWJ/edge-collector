@@ -65,14 +65,15 @@ type ApiEnvelope struct {
 }
 
 type channelRequest struct {
-	Name      string `json:"name"`
-	Port      string `json:"port"`
-	BaudRate  int    `json:"baudRate"`
-	DataBits  int    `json:"dataBits"`
-	StopBits  int    `json:"stopBits"`
-	Parity    string `json:"parity"`
-	TimeoutMS int    `json:"timeoutMs"`
-	Enabled   int    `json:"enabled"`
+	Name                string `json:"name"`
+	Port                string `json:"port"`
+	BaudRate            int    `json:"baudRate"`
+	DataBits            int    `json:"dataBits"`
+	StopBits            int    `json:"stopBits"`
+	Parity              string `json:"parity"`
+	TimeoutMS           int    `json:"timeoutMs"`
+	InterRequestDelayMS int    `json:"interRequestDelayMs"`
+	Enabled             int    `json:"enabled"`
 }
 
 type deviceRequest struct {
@@ -101,7 +102,7 @@ func (r channelRequest) input() ChannelInput {
 	if r.TimeoutMS == 0 {
 		r.TimeoutMS = 300
 	}
-	return ChannelInput{Name: r.Name, Port: r.Port, BaudRate: r.BaudRate, DataBits: r.DataBits, StopBits: r.StopBits, Parity: r.Parity, TimeoutMS: r.TimeoutMS, Enabled: r.Enabled}
+	return ChannelInput{Name: r.Name, Port: r.Port, BaudRate: r.BaudRate, DataBits: r.DataBits, StopBits: r.StopBits, Parity: r.Parity, TimeoutMS: r.TimeoutMS, InterRequestDelayMS: r.InterRequestDelayMS, Enabled: r.Enabled}
 }
 
 func (r deviceRequest) input() DeviceInput {

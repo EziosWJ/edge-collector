@@ -9,6 +9,7 @@ export type AcquisitionChannel = {
   stopBits: number;
   parity: "N" | "E" | "O";
   timeoutMs: number;
+  interRequestDelayMs: number;
   enabled: ApiStatus;
   createTime?: string | null;
   updateTime?: string | null;

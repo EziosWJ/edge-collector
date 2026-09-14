@@ -37,6 +37,7 @@ const channelSchema = z.object({
   stopBits: z.coerce.number().pipe(z.union([z.literal(1), z.literal(2)])),
   parity: z.enum(["N", "E", "O"]),
   timeoutMs: z.coerce.number().int().positive("通信超时必须大于 0"),
+  interRequestDelayMs: z.coerce.number().int().min(0, "报文间隔延迟不能小于 0").max(60000, "报文间隔延迟不能超过 60000 毫秒"),
   enabled: z.coerce.number().pipe(z.union([z.literal(0), z.literal(1)])),
 });
 
@@ -51,6 +52,7 @@ const emptyValues: ChannelFormValues = {
   stopBits: 2,
   parity: "N",
   timeoutMs: 300,
+  interRequestDelayMs: 0,
   enabled: 1,
 };
 
@@ -64,6 +66,7 @@ function toFormValues(channel?: AcquisitionChannel): ChannelFormValues {
         stopBits: channel.stopBits as 1 | 2,
         parity: channel.parity,
         timeoutMs: channel.timeoutMs,
+        interRequestDelayMs: channel.interRequestDelayMs,
         enabled: channel.enabled,
       }
     : emptyValues;
@@ -106,10 +109,10 @@ export function AcquisitionChannelsPage() {
     try {
       if (editing) {
         await updateAcquisitionChannel(editing.id, toPayload(values));
-        toast.success("通信通道已更新，重启服务后生效");
+        toast.success("通信通道已更新，后续采集请求生效");
       } else {
         await createAcquisitionChannel(toPayload(values));
-        toast.success("通信通道已创建，重启服务后生效");
+        toast.success("通信通道已创建，后续采集请求生效");
       }
       setFormOpen(false);
       list.reload();
@@ -161,6 +164,12 @@ export function AcquisitionChannelsPage() {
       render: (value) => `${value} ms`,
     },
     {
+      title: "报文间隔",
+      dataIndex: "interRequestDelayMs",
+      width: 120,
+      render: (value) => `${value} ms`,
+    },
+    {
       title: "状态",
       dataIndex: "enabled",
       width: 100,
@@ -190,7 +199,7 @@ export function AcquisitionChannelsPage() {
     <>
       <PageHeader
         title="通信通道"
-        description="维护 RS485 串口参数。配置保存后需要重启服务才能开始采集。"
+        description="维护 RS485 串口参数与报文间隔。配置保存后由运行中的采集器刷新。"
         actions={
           <Button variant="primary" onClick={() => openForm()}>
             <Plus className="h-4 w-4" aria-hidden />
@@ -275,6 +284,9 @@ function ChannelForm({ form, loading }: { form: ReturnType<typeof useForm<Channe
       </Field>
       <Field label="通信超时（毫秒）" required error={errors.timeoutMs?.message}>
         <Input {...register("timeoutMs", { valueAsNumber: true })} type="number" min={1} disabled={loading} />
+      </Field>
+      <Field label="报文间隔延迟（毫秒）" required error={errors.interRequestDelayMs?.message} help="同一通道连续 Modbus 请求之间的额外等待；0 表示仅使用 RTU 协议自身间隔。">
+        <Input {...register("interRequestDelayMs", { valueAsNumber: true })} type="number" min={0} max={60000} disabled={loading} />
       </Field>
       <Field label="状态" required error={errors.enabled?.message}>
         <Select {...register("enabled", { valueAsNumber: true })} disabled={loading}>

@@ -67,7 +67,8 @@ func (r *Repository) UpdateChannel(ctx context.Context, value Channel, event aud
 		if err := tx.Model(&Channel{}).Where("id=? AND deleted=0", value.ID).Updates(map[string]any{
 			"name": value.Name, "port": value.Port, "baud_rate": value.BaudRate,
 			"data_bits": value.DataBits, "stop_bits": value.StopBits, "parity": value.Parity,
-			"timeout_ms": value.TimeoutMS, "enabled": value.Enabled, "update_time": time.Now().UTC(),
+			"timeout_ms": value.TimeoutMS, "inter_request_delay_ms": value.InterRequestDelayMS,
+			"enabled": value.Enabled, "update_time": time.Now().UTC(),
 		}).Error; err != nil {
 			return err
 		}
