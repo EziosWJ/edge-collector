@@ -178,7 +178,56 @@ func validateDevice(input DeviceInput) error {
 		}
 		return ErrInvalid
 	}
+	if err := validateRegisterBlocks(input.RegisterBlocks); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateRegisterBlocks(blocks []RegisterBlockInput) error {
+	if len(blocks) == 0 {
+		return ErrInvalid
+	}
+	names := make(map[string]struct{}, len(blocks))
+	orders := make(map[int]struct{}, len(blocks))
+	intervals := make(map[int][]registerInterval)
+	allZeroOrder := len(blocks) > 1
+	for _, block := range blocks {
+		if block.SortOrder != 0 {
+			allZeroOrder = false
+			break
+		}
+	}
+	for _, block := range blocks {
+		name := strings.TrimSpace(block.Name)
+		if name == "" || block.ID < 0 || block.SortOrder < 0 || (block.FunctionCode != FunctionCodeReadHoldingRegisters && block.FunctionCode != FunctionCodeReadInputRegisters) || block.StartAddress < 0 || block.StartAddress > 65535 || block.Quantity < 1 || block.Quantity > 125 || block.StartAddress+block.Quantity-1 > 65535 {
+			return ErrInvalid
+		}
+		if _, exists := names[name]; exists {
+			return ErrInvalid
+		}
+		names[name] = struct{}{}
+		if _, exists := orders[block.SortOrder]; exists && !allZeroOrder {
+			return ErrInvalid
+		}
+		orders[block.SortOrder] = struct{}{}
+		intervals[block.FunctionCode] = append(intervals[block.FunctionCode], registerInterval{start: block.StartAddress, end: block.StartAddress + block.Quantity - 1})
+	}
+	for _, ranges := range intervals {
+		for i := 0; i < len(ranges); i++ {
+			for j := i + 1; j < len(ranges); j++ {
+				if ranges[i].start <= ranges[j].end && ranges[j].start <= ranges[i].end {
+					return ErrInvalid
+				}
+			}
+		}
+	}
+	return nil
+}
+
+type registerInterval struct {
+	start int
+	end   int
 }
 
 func channelFrom(input ChannelInput, id int64) Channel {
@@ -186,7 +235,29 @@ func channelFrom(input ChannelInput, id int64) Channel {
 }
 
 func deviceFrom(input DeviceInput, id int64) Device {
-	return Device{ID: id, Name: strings.TrimSpace(input.Name), DeviceType: input.DeviceType, ChannelID: input.ChannelID, SlaveID: input.SlaveID, PollIntervalMS: input.PollIntervalMS, FailureThreshold: input.FailureThreshold, Enabled: input.Enabled}
+	blocks := make([]RegisterBlock, len(input.RegisterBlocks))
+	allZeroOrder := len(input.RegisterBlocks) > 1
+	for _, block := range input.RegisterBlocks {
+		if block.SortOrder != 0 {
+			allZeroOrder = false
+		}
+	}
+	for index, block := range input.RegisterBlocks {
+		sortOrder := block.SortOrder
+		if allZeroOrder {
+			sortOrder = index
+		}
+		blocks[index] = RegisterBlock{
+			ID:           block.ID,
+			DeviceID:     id,
+			Name:         strings.TrimSpace(block.Name),
+			FunctionCode: block.FunctionCode,
+			StartAddress: block.StartAddress,
+			Quantity:     block.Quantity,
+			SortOrder:    sortOrder,
+		}
+	}
+	return Device{ID: id, Name: strings.TrimSpace(input.Name), DeviceType: input.DeviceType, ChannelID: input.ChannelID, SlaveID: input.SlaveID, PollIntervalMS: input.PollIntervalMS, FailureThreshold: input.FailureThreshold, Enabled: input.Enabled, RegisterBlocks: blocks}
 }
 
 func auditEvent(meta AuditMetadata, action, resource string, id int64) audit.Event {

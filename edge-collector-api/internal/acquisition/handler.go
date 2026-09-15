@@ -77,13 +77,23 @@ type channelRequest struct {
 }
 
 type deviceRequest struct {
-	Name             string `json:"name"`
-	DeviceType       string `json:"deviceType"`
-	ChannelID        int64  `json:"channelId"`
-	SlaveID          uint8  `json:"slaveId"`
-	PollIntervalMS   int    `json:"pollIntervalMs"`
-	FailureThreshold int    `json:"failureThreshold"`
-	Enabled          int    `json:"enabled"`
+	Name             string                 `json:"name"`
+	DeviceType       string                 `json:"deviceType"`
+	ChannelID        int64                  `json:"channelId"`
+	SlaveID          uint8                  `json:"slaveId"`
+	PollIntervalMS   int                    `json:"pollIntervalMs"`
+	FailureThreshold int                    `json:"failureThreshold"`
+	Enabled          int                    `json:"enabled"`
+	RegisterBlocks   []registerBlockRequest `json:"registerBlocks"`
+}
+
+type registerBlockRequest struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	FunctionCode int    `json:"functionCode"`
+	StartAddress int    `json:"startAddress"`
+	Quantity     int    `json:"quantity"`
+	SortOrder    int    `json:"sortOrder"`
 }
 
 func (r channelRequest) input() ChannelInput {
@@ -115,7 +125,11 @@ func (r deviceRequest) input() DeviceInput {
 	if r.FailureThreshold == 0 {
 		r.FailureThreshold = 3
 	}
-	return DeviceInput{Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, SlaveID: r.SlaveID, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled}
+	blocks := make([]RegisterBlockInput, len(r.RegisterBlocks))
+	for index, block := range r.RegisterBlocks {
+		blocks[index] = RegisterBlockInput{ID: block.ID, Name: block.Name, FunctionCode: block.FunctionCode, StartAddress: block.StartAddress, Quantity: block.Quantity, SortOrder: block.SortOrder}
+	}
+	return DeviceInput{Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, SlaveID: r.SlaveID, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled, RegisterBlocks: blocks}
 }
 
 // pageChannels godoc

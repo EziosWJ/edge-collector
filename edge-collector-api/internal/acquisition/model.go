@@ -27,17 +27,18 @@ type Channel struct {
 func (Channel) TableName() string { return "acquisition_channel" }
 
 type Device struct {
-	ID               int64     `gorm:"column:id;primaryKey" json:"id"`
-	Name             string    `gorm:"column:name" json:"name"`
-	DeviceType       string    `gorm:"column:device_type" json:"deviceType"`
-	ChannelID        int64     `gorm:"column:channel_id" json:"channelId"`
-	SlaveID          uint8     `gorm:"column:slave_id" json:"slaveId"`
-	PollIntervalMS   int       `gorm:"column:poll_interval_ms" json:"pollIntervalMs"`
-	FailureThreshold int       `gorm:"column:failure_threshold" json:"failureThreshold"`
-	Enabled          int       `gorm:"column:enabled" json:"enabled"`
-	CreateTime       time.Time `gorm:"column:create_time;autoCreateTime" json:"createTime"`
-	UpdateTime       time.Time `gorm:"column:update_time;autoUpdateTime" json:"updateTime"`
-	Deleted          int       `gorm:"column:deleted" json:"-"`
+	ID               int64           `gorm:"column:id;primaryKey" json:"id"`
+	Name             string          `gorm:"column:name" json:"name"`
+	DeviceType       string          `gorm:"column:device_type" json:"deviceType"`
+	ChannelID        int64           `gorm:"column:channel_id" json:"channelId"`
+	SlaveID          uint8           `gorm:"column:slave_id" json:"slaveId"`
+	PollIntervalMS   int             `gorm:"column:poll_interval_ms" json:"pollIntervalMs"`
+	FailureThreshold int             `gorm:"column:failure_threshold" json:"failureThreshold"`
+	Enabled          int             `gorm:"column:enabled" json:"enabled"`
+	CreateTime       time.Time       `gorm:"column:create_time;autoCreateTime" json:"createTime"`
+	UpdateTime       time.Time       `gorm:"column:update_time;autoUpdateTime" json:"updateTime"`
+	Deleted          int             `gorm:"column:deleted" json:"-"`
+	RegisterBlocks   []RegisterBlock `gorm:"-" json:"registerBlocks"`
 }
 
 func (Device) TableName() string { return "acquisition_device" }
@@ -62,6 +63,35 @@ type DeviceInput struct {
 	PollIntervalMS   int
 	FailureThreshold int
 	Enabled          int
+	RegisterBlocks   []RegisterBlockInput
+}
+
+const (
+	FunctionCodeReadHoldingRegisters = 3
+	FunctionCodeReadInputRegisters   = 4
+)
+
+type RegisterBlock struct {
+	ID           int64     `gorm:"column:id;primaryKey" json:"id"`
+	DeviceID     int64     `gorm:"column:device_id" json:"deviceId"`
+	Name         string    `gorm:"column:name" json:"name"`
+	FunctionCode int       `gorm:"column:function_code" json:"functionCode"`
+	StartAddress int       `gorm:"column:start_address" json:"startAddress"`
+	Quantity     int       `gorm:"column:quantity" json:"quantity"`
+	SortOrder    int       `gorm:"column:sort_order" json:"sortOrder"`
+	CreateTime   time.Time `gorm:"column:create_time;autoCreateTime" json:"createTime"`
+	UpdateTime   time.Time `gorm:"column:update_time;autoUpdateTime" json:"updateTime"`
+}
+
+func (RegisterBlock) TableName() string { return "acquisition_register_block" }
+
+type RegisterBlockInput struct {
+	ID           int64
+	Name         string
+	FunctionCode int
+	StartAddress int
+	Quantity     int
+	SortOrder    int
 }
 
 type ChannelQuery struct {

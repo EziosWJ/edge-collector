@@ -93,7 +93,7 @@ func TestNextDeviceOrdersByDueTimeThenID(t *testing.T) {
 func TestActiveChannelConfigFiltersDisabledDevices(t *testing.T) {
 	configs := activeChannelConfigs(
 		[]Channel{{ID: 9, Enabled: Enabled}},
-		[]Device{{ID: 2, ChannelID: 9, Enabled: Disabled}, {ID: 1, ChannelID: 9, Enabled: Enabled}},
+		[]Device{{ID: 2, ChannelID: 9, Enabled: Disabled}, {ID: 1, ChannelID: 9, Enabled: Enabled, RegisterBlocks: testBlocks(31)}},
 	)
 	config, ok := configs[9]
 	if !ok || len(config.devices) != 1 || config.devices[0].ID != 1 {
@@ -134,4 +134,8 @@ func (f *pacingSessionFake) ReadHoldingRegisters(_ context.Context, _ uint8, add
 		return nil, err
 	}
 	return []uint16{1, 2, 3, 4, 5, 6}, nil
+}
+
+func (f *pacingSessionFake) ReadInputRegisters(ctx context.Context, slaveID uint8, address, quantity uint16) ([]uint16, error) {
+	return f.ReadHoldingRegisters(ctx, slaveID, address, quantity)
 }

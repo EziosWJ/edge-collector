@@ -1,13 +1,11 @@
 package acquisition
 
 import (
-	"errors"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
-
-var errPartialRead = errors.New("partial register read")
 
 type CommunicationStatus string
 
@@ -18,9 +16,24 @@ const (
 	StatusOffline  CommunicationStatus = "OFFLINE"
 )
 
-type FeedProtectorReading struct {
-	Data        FeedProtectorData
-	ValidFields map[string]bool
+type RegisterBlockState struct {
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	FunctionCode  int        `json:"functionCode"`
+	StartAddress  int        `json:"startAddress"`
+	Quantity      int        `json:"quantity"`
+	SortOrder     int        `json:"sortOrder"`
+	Values        []*uint16  `json:"values"`
+	Valid         bool       `json:"valid"`
+	LastAttemptAt *time.Time `json:"lastAttemptAt"`
+	LastSuccessAt *time.Time `json:"lastSuccessAt"`
+	LastError     string     `json:"lastError,omitempty"`
+}
+
+type RegisterBlockRead struct {
+	Block  RegisterBlock
+	Values []uint16
+	Err    error
 }
 
 type CurrentState struct {
@@ -28,9 +41,7 @@ type CurrentState struct {
 	DeviceName          string               `json:"deviceName"`
 	ChannelID           int64                `json:"channelId"`
 	SlaveID             uint8                `json:"slaveId"`
-	Data                FeedProtectorData    `json:"data"`
-	FieldValidity       map[string]bool      `json:"fieldValidity"`
-	FieldUpdatedAt      map[string]time.Time `json:"fieldUpdatedAt"`
+	RegisterBlocks      []RegisterBlockState `json:"registerBlocks"`
 	LastAttemptAt       *time.Time           `json:"lastAttemptAt"`
 	LastSuccessAt       *time.Time           `json:"lastSuccessAt"`
 	Status              CommunicationStatus  `json:"status"`
@@ -50,67 +61,106 @@ func NewCurrentStateStore() *CurrentStateStore {
 func (s *CurrentStateStore) Ensure(device Device) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	state, ok := s.states[device.ID]
-	if ok {
-		state.DeviceName = device.Name
-		state.ChannelID = device.ChannelID
-		state.SlaveID = device.SlaveID
-		s.states[device.ID] = state
+	if !ok {
+		s.states[device.ID] = newCurrentState(device)
 		return
-	}
-	s.states[device.ID] = CurrentState{
-		DeviceID:       device.ID,
-		DeviceName:     device.Name,
-		ChannelID:      device.ChannelID,
-		SlaveID:        device.SlaveID,
-		FieldValidity:  make(map[string]bool),
-		FieldUpdatedAt: make(map[string]time.Time),
-		Status:         StatusInitial,
-	}
-}
-
-func (s *CurrentStateStore) Record(device Device, reading FeedProtectorReading, readErr error, at time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	state := s.states[device.ID]
-	if state.DeviceID == 0 {
-		state = CurrentState{
-			DeviceID:       device.ID,
-			FieldValidity:  make(map[string]bool),
-			FieldUpdatedAt: make(map[string]time.Time),
-			Status:         StatusInitial,
-		}
 	}
 	state.DeviceName = device.Name
 	state.ChannelID = device.ChannelID
 	state.SlaveID = device.SlaveID
-	state.LastAttemptAt = timePtr(at)
-
-	for field, valid := range reading.ValidFields {
-		state.FieldValidity[field] = valid
-		if !valid {
-			continue
-		}
-		applyField(&state.Data, reading.Data, field)
-		state.FieldUpdatedAt[field] = at
+	var changed bool
+	state.RegisterBlocks, changed = reconcileBlockStates(state.RegisterBlocks, device.RegisterBlocks)
+	if changed {
+		state.Status = StatusInitial
+		state.ConsecutiveFailures = 0
+		state.LastAttemptAt = nil
+		state.LastSuccessAt = nil
+		state.LastError = ""
 	}
-	if readErr != nil {
-		for _, field := range feedProtectorFields {
-			if !reading.ValidFields[field] {
-				state.FieldValidity[field] = false
-			}
-		}
-	}
+	s.states[device.ID] = state
+}
 
-	if readErr == nil {
-		state.Status = StatusOnline
+func (s *CurrentStateStore) RecordCycle(device Device, reads []RegisterBlockRead, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.states[device.ID]
+	if !ok {
+		state = newCurrentState(device)
+	}
+	state.DeviceName = device.Name
+	state.ChannelID = device.ChannelID
+	state.SlaveID = device.SlaveID
+	var shapeChanged bool
+	state.RegisterBlocks, shapeChanged = reconcileBlockStates(state.RegisterBlocks, device.RegisterBlocks)
+	if shapeChanged {
+		state.LastSuccessAt = nil
 		state.ConsecutiveFailures = 0
 		state.LastError = ""
+	}
+	state.LastAttemptAt = timePtr(at)
+
+	byBlock := make(map[string]RegisterBlockRead, len(reads))
+	for _, read := range reads {
+		byBlock[blockIdentity(read.Block)] = read
+	}
+	successes := 0
+	var firstErr error
+	for index := range state.RegisterBlocks {
+		blockState := &state.RegisterBlocks[index]
+		read, found := byBlock[blockIdentity(registerBlockFromState(*blockState))]
+		if !found {
+			blockState.Valid = false
+			blockState.LastAttemptAt = timePtr(at)
+			if firstErr == nil {
+				firstErr = errorString("读取块未执行")
+			}
+			continue
+		}
+		blockState.LastAttemptAt = timePtr(at)
+		if read.Err != nil {
+			blockState.Valid = false
+			blockState.LastError = read.Err.Error()
+			if firstErr == nil {
+				firstErr = read.Err
+			}
+			continue
+		}
+		if len(read.Values) != blockState.Quantity {
+			blockState.Valid = false
+			blockState.LastError = "读取块响应数量不符"
+			if firstErr == nil {
+				firstErr = errorString(blockState.LastError)
+			}
+			continue
+		}
+		blockState.Values = uint16Pointers(read.Values)
+		blockState.Valid = true
+		blockState.LastSuccessAt = timePtr(at)
+		blockState.LastError = ""
+		successes++
+	}
+
+	total := len(state.RegisterBlocks)
+	switch {
+	case total == 0:
+		state.Status = StatusInitial
+		state.ConsecutiveFailures = 0
+	case successes == total:
+		state.Status = StatusOnline
+		state.ConsecutiveFailures = 0
 		state.LastSuccessAt = timePtr(at)
-	} else {
+		state.LastError = ""
+	case successes > 0:
+		state.Status = StatusDegraded
+		state.ConsecutiveFailures = 0
+		state.LastSuccessAt = timePtr(at)
+		state.LastError = firstError(firstErr)
+	default:
 		state.ConsecutiveFailures++
-		state.LastError = readErr.Error()
+		state.LastError = firstError(firstErr)
 		threshold := device.FailureThreshold
 		if threshold < 1 {
 			threshold = 3
@@ -121,12 +171,7 @@ func (s *CurrentStateStore) Record(device Device, reading FeedProtectorReading, 
 			state.Status = StatusDegraded
 		}
 	}
-
 	s.states[device.ID] = state
-}
-
-var feedProtectorFields = []string{
-	"voltage", "current", "activePower", "frequency", "powerFactor", "status",
 }
 
 func (s *CurrentStateStore) Get(deviceID int64) (CurrentState, bool) {
@@ -156,45 +201,140 @@ func (s *CurrentStateStore) List() []CurrentState {
 	return states
 }
 
-func applyField(target *FeedProtectorData, source FeedProtectorData, field string) {
-	switch field {
-	case "voltage":
-		target.Voltage = source.Voltage
-	case "current":
-		target.Current = source.Current
-	case "activePower":
-		target.ActivePower = source.ActivePower
-	case "frequency":
-		target.Frequency = source.Frequency
-	case "powerFactor":
-		target.PowerFactor = source.PowerFactor
-	case "status":
-		target.Status = source.Status
+func newCurrentState(device Device) CurrentState {
+	blocks, _ := reconcileBlockStates(nil, device.RegisterBlocks)
+	return CurrentState{
+		DeviceID:       device.ID,
+		DeviceName:     device.Name,
+		ChannelID:      device.ChannelID,
+		SlaveID:        device.SlaveID,
+		RegisterBlocks: blocks,
+		Status:         StatusInitial,
 	}
+}
+
+func reconcileBlockStates(existing []RegisterBlockState, configured []RegisterBlock) ([]RegisterBlockState, bool) {
+	byIdentity := make(map[string]RegisterBlockState, len(existing))
+	for _, state := range existing {
+		byIdentity[blockStateIdentity(state)] = state
+	}
+	result := make([]RegisterBlockState, 0, len(configured))
+	changed := len(existing) != len(configured)
+	for _, block := range configured {
+		state, found := byIdentity[blockIdentity(block)]
+		if !found {
+			state = newRegisterBlockState(block)
+			changed = true
+		} else if !sameRegisterShape(registerBlockFromState(state), block) {
+			state = newRegisterBlockState(block)
+			changed = true
+		} else {
+			state.ID = block.ID
+			state.Name = block.Name
+			state.FunctionCode = block.FunctionCode
+			state.StartAddress = block.StartAddress
+			state.Quantity = block.Quantity
+			state.SortOrder = block.SortOrder
+		}
+		result = append(result, state)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].SortOrder != result[j].SortOrder {
+			return result[i].SortOrder < result[j].SortOrder
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result, changed
+}
+
+func newRegisterBlockState(block RegisterBlock) RegisterBlockState {
+	quantity := block.Quantity
+	if quantity < 0 {
+		quantity = 0
+	}
+	return RegisterBlockState{
+		ID:           block.ID,
+		Name:         block.Name,
+		FunctionCode: block.FunctionCode,
+		StartAddress: block.StartAddress,
+		Quantity:     block.Quantity,
+		SortOrder:    block.SortOrder,
+		Values:       make([]*uint16, quantity),
+	}
+}
+
+func registerBlockFromState(state RegisterBlockState) RegisterBlock {
+	return RegisterBlock{ID: state.ID, Name: state.Name, FunctionCode: state.FunctionCode, StartAddress: state.StartAddress, Quantity: state.Quantity, SortOrder: state.SortOrder}
+}
+
+func sameRegisterShape(left, right RegisterBlock) bool {
+	return left.FunctionCode == right.FunctionCode && left.StartAddress == right.StartAddress && left.Quantity == right.Quantity
+}
+
+func blockIdentity(block RegisterBlock) string {
+	if block.ID > 0 {
+		return "id:" + formatInt64(block.ID)
+	}
+	return "shape:" + block.Name + ":" + formatInt(block.FunctionCode) + ":" + formatInt(block.StartAddress) + ":" + formatInt(block.Quantity)
+}
+
+func blockStateIdentity(state RegisterBlockState) string {
+	return blockIdentity(registerBlockFromState(state))
+}
+
+func uint16Pointers(values []uint16) []*uint16 {
+	result := make([]*uint16, len(values))
+	for index, value := range values {
+		copy := value
+		result[index] = &copy
+	}
+	return result
 }
 
 func cloneState(state CurrentState) CurrentState {
-	state.FieldValidity = cloneBoolMap(state.FieldValidity)
-	state.FieldUpdatedAt = cloneTimeMap(state.FieldUpdatedAt)
+	if state.RegisterBlocks == nil {
+		state.RegisterBlocks = []RegisterBlockState{}
+	} else {
+		state.RegisterBlocks = append([]RegisterBlockState(nil), state.RegisterBlocks...)
+	}
+	for index := range state.RegisterBlocks {
+		state.RegisterBlocks[index].Values = append([]*uint16(nil), state.RegisterBlocks[index].Values...)
+		for valueIndex, value := range state.RegisterBlocks[index].Values {
+			if value == nil {
+				continue
+			}
+			copy := *value
+			state.RegisterBlocks[index].Values[valueIndex] = &copy
+		}
+		state.RegisterBlocks[index].LastAttemptAt = cloneTimePointer(state.RegisterBlocks[index].LastAttemptAt)
+		state.RegisterBlocks[index].LastSuccessAt = cloneTimePointer(state.RegisterBlocks[index].LastSuccessAt)
+	}
+	state.LastAttemptAt = cloneTimePointer(state.LastAttemptAt)
+	state.LastSuccessAt = cloneTimePointer(state.LastSuccessAt)
 	return state
 }
 
-func cloneBoolMap(value map[string]bool) map[string]bool {
-	result := make(map[string]bool, len(value))
-	for key, item := range value {
-		result[key] = item
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
 	}
-	return result
+	copy := *value
+	return &copy
 }
 
-func cloneTimeMap(value map[string]time.Time) map[string]time.Time {
-	result := make(map[string]time.Time, len(value))
-	for key, item := range value {
-		result[key] = item
+func firstError(err error) string {
+	if err == nil {
+		return "读取块失败"
 	}
-	return result
+	return err.Error()
 }
 
+type errorString string
+
+func (e errorString) Error() string { return string(e) }
+
+func formatInt(value int) string     { return strconv.Itoa(value) }
+func formatInt64(value int64) string { return strconv.FormatInt(value, 10) }
 func timePtr(value time.Time) *time.Time {
 	copy := value
 	return &copy

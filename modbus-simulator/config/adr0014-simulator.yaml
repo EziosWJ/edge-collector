@@ -1,0 +1,23 @@
+logging:
+  level: INFO
+  hex: true
+channels:
+  - name: adr0014-rtu0
+    protocol: rtu
+    alias: /tmp/adr0014-modbus-rtu0
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    devices:
+      - devices/feeder_protector_01.yaml
+      - devices/feeder_protector_02.yaml
+  - name: adr0014-rtu1
+    protocol: rtu
+    alias: /tmp/adr0014-modbus-rtu1
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    devices:
+      - devices/feeder_protector_01.yaml

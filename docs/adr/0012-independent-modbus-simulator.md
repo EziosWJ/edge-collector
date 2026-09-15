@@ -38,7 +38,7 @@ Modbus TCP 直接使用 PyModbus Server；RTU 使用 Python 标准库 `pty.openp
 
 ### 配置和协议来源
 
-总配置为 `config/simulator.yaml`，设备配置位于 `config/devices/`。默认只生成两台实际可追溯到当前 Go 代码的 `FEED_PROTECTOR` 开发设备：Slave 1 和 Slave 2。默认设备映射是 holding register、FC03、零基地址 0–6：电压、电流、有功功率、频率、功率因数和原始状态字。具体类型、倍率和默认值以 `docs/specs/modbus-simulator.md` 为准。
+总配置为 `config/simulator.yaml`，设备配置位于 `config/devices/`。默认提供两台 `FEED_PROTECTOR` 开发设备：Slave 1 和 Slave 2。已有地址 0～6、字段名、类型和工程值只用于构造可重复的模拟器寄存器内容，不代表厂家协议事实；Go 第一阶段验收只读取其原始 16-bit 寄存器值，并可另用 FC04 测试夹具验证输入寄存器读取。
 
 配置在启动时一次性加载并校验；第一阶段修改 YAML 后重启生效，不承诺热加载。允许配置 fixed、increment、decrement、random 和响应延迟，但不引入脚本执行、数据库、Web UI、MQ 或复杂故障注入。
 
@@ -56,7 +56,7 @@ Modbus TCP 直接使用 PyModbus Server；RTU 使用 Python 标准库 `pty.openp
 ## Consequences
 
 - 无硬件时可以直接使用固定串口 alias、网络端口和 YAML 设备值完成联调。
-- 模拟器能准确覆盖当前 Go 的开发映射，但不能证明厂家真实寄存器表、告警地址或状态位语义。
+- 模拟器能提供稳定的 FC03 / FC04 原始寄存器测试数据，但不能证明厂家真实寄存器表、工程值、告警地址或状态位语义。
 - PyModbus 版本与其 simulator API 成为工具内部升级约束；Transport 和 Datastore 边界保留后续替换空间。
 - Go 业务 API 当前仍只支持 RTU，TCP、UDP 和 RTU over UDP 端点不能通过现有设备配置页面直接启用。
 
@@ -66,3 +66,4 @@ Modbus TCP 直接使用 PyModbus Server；RTU 使用 Python 标准库 `pty.openp
 - [协议核对记录](../../modbus-simulator/PROTOCOL_FINDINGS.md)
 - [模拟器 README](../../modbus-simulator/README.md)
 - [ADR-0011](0011-phase-one-rs485-modbus-rtu-acquisition.md)
+- [ADR-0014](0014-raw-register-acquisition-before-protocol-parsing.md)

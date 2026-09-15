@@ -407,7 +407,11 @@ func waitForRunnerEvent(ctx context.Context, stop <-chan struct{}, updates <-cha
 
 func (r *Runtime) recordChannelFailure(devices []Device, err error) {
 	for _, device := range devices {
-		r.store.Record(device, FeedProtectorReading{}, err, time.Now().UTC())
+		reads := make([]RegisterBlockRead, len(device.RegisterBlocks))
+		for index, block := range device.RegisterBlocks {
+			reads[index] = RegisterBlockRead{Block: block, Err: err}
+		}
+		r.store.RecordCycle(device, reads, time.Now().UTC())
 	}
 	r.logger.Printf("采集通道不可用 error=%v", err)
 }
@@ -426,16 +430,23 @@ func PollChannelOnce(ctx context.Context, channel Channel, devices []Device, ses
 }
 
 func pollDeviceOnce(ctx context.Context, _ Channel, device Device, session ModbusSession, store *CurrentStateStore) {
-	reading := FeedProtectorReading{}
-	var readErr error
+	reads := make([]RegisterBlockRead, 0, len(device.RegisterBlocks))
+	var setupErr error
 	if device.DeviceType != "" && device.DeviceType != DeviceTypeFeedProtector {
-		readErr = fmt.Errorf("不支持的设备类型: %s", device.DeviceType)
+		setupErr = fmt.Errorf("不支持的设备类型: %s", device.DeviceType)
 	} else if err := session.SetUnitID(device.SlaveID); err != nil {
-		readErr = fmt.Errorf("设置 Modbus 地址 %d 失败: %w", device.SlaveID, err)
-	} else {
-		reading, readErr = ReadFeedProtector(ctx, session, device.SlaveID)
+		setupErr = fmt.Errorf("设置 Modbus 地址 %d 失败: %w", device.SlaveID, err)
 	}
-	store.Record(device, reading, readErr, time.Now().UTC())
+	for _, block := range device.RegisterBlocks {
+		read := RegisterBlockRead{Block: block}
+		if setupErr != nil {
+			read.Err = setupErr
+		} else {
+			read.Values, read.Err = readRegisterBlock(ctx, session, device.SlaveID, block)
+		}
+		reads = append(reads, read)
+	}
+	store.RecordCycle(device, reads, time.Now().UTC())
 }
 
 func activeChannelConfigs(channels []Channel, devices []Device) map[int64]channelConfig {
@@ -456,7 +467,7 @@ func activeChannelConfigs(channels []Channel, devices []Device) map[int64]channe
 func devicesForChannel(devices []Device, channelID int64) []Device {
 	result := make([]Device, 0)
 	for _, device := range devices {
-		if device.ChannelID == channelID && device.Enabled == Enabled {
+		if device.ChannelID == channelID && device.Enabled == Enabled && len(device.RegisterBlocks) > 0 {
 			result = append(result, device)
 		}
 	}
@@ -503,7 +514,11 @@ func cloneChannels(channels []Channel) []Channel {
 }
 
 func cloneDevices(devices []Device) []Device {
-	return append([]Device(nil), devices...)
+	result := append([]Device(nil), devices...)
+	for index := range result {
+		result[index].RegisterBlocks = append([]RegisterBlock(nil), result[index].RegisterBlocks...)
+	}
+	return result
 }
 
 func cloneChannelConfig(config channelConfig) channelConfig {

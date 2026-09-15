@@ -107,6 +107,10 @@ func (r *Repository) PageDevices(ctx context.Context, q DeviceQuery) (Page[Devic
 	}
 	page.Page, page.PageSize = q.Page, q.PageSize
 	err := db.Order("id").Offset((q.Page - 1) * q.PageSize).Limit(q.PageSize).Find(&page.Records).Error
+	if err != nil {
+		return page, err
+	}
+	err = r.loadRegisterBlocks(ctx, page.Records)
 	return page, err
 }
 
@@ -116,6 +120,14 @@ func (r *Repository) FindDevice(ctx context.Context, id int64) (*Device, error) 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrNotFound
 	}
+	if err != nil {
+		return nil, err
+	}
+	devices := []Device{value}
+	if err := r.loadRegisterBlocks(ctx, devices); err != nil {
+		return nil, err
+	}
+	value = devices[0]
 	return &value, err
 }
 
@@ -132,6 +144,9 @@ func (r *Repository) CreateDevice(ctx context.Context, value Device, event audit
 		if err := tx.Create(&value).Error; err != nil {
 			return err
 		}
+		if err := saveRegisterBlocks(tx, value.ID, value.RegisterBlocks); err != nil {
+			return err
+		}
 		event.ResourceID = value.ID
 		return audit.RecordOn(ctx, tx, event)
 	})
@@ -145,6 +160,9 @@ func (r *Repository) UpdateDevice(ctx context.Context, value Device, event audit
 			"slave_id": value.SlaveID, "poll_interval_ms": value.PollIntervalMS,
 			"failure_threshold": value.FailureThreshold, "enabled": value.Enabled, "update_time": time.Now().UTC(),
 		}).Error; err != nil {
+			return err
+		}
+		if err := saveRegisterBlocks(tx, value.ID, value.RegisterBlocks); err != nil {
 			return err
 		}
 		return audit.RecordOn(ctx, tx, event)
@@ -170,7 +188,81 @@ func (r *Repository) EnabledConfiguration(ctx context.Context) ([]Channel, []Dev
 	if err := r.db.WithContext(ctx).Where("enabled=1 AND deleted=0").Order("channel_id,id").Find(&devices).Error; err != nil {
 		return nil, nil, err
 	}
+	if err := r.loadRegisterBlocks(ctx, devices); err != nil {
+		return nil, nil, err
+	}
 	return channels, devices, nil
+}
+
+func (r *Repository) loadRegisterBlocks(ctx context.Context, devices []Device) error {
+	if len(devices) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(devices))
+	byID := make(map[int64]int, len(devices))
+	for index := range devices {
+		ids = append(ids, devices[index].ID)
+		byID[devices[index].ID] = index
+		devices[index].RegisterBlocks = []RegisterBlock{}
+	}
+	var blocks []RegisterBlock
+	if err := r.db.WithContext(ctx).Where("device_id IN ?", ids).Order("device_id, sort_order, id").Find(&blocks).Error; err != nil {
+		return err
+	}
+	for _, block := range blocks {
+		if index, ok := byID[block.DeviceID]; ok {
+			devices[index].RegisterBlocks = append(devices[index].RegisterBlocks, block)
+		}
+	}
+	return nil
+}
+
+func saveRegisterBlocks(tx *gorm.DB, deviceID int64, blocks []RegisterBlock) error {
+	var existing []RegisterBlock
+	if err := tx.Where("device_id=?", deviceID).Find(&existing).Error; err != nil {
+		return err
+	}
+	existingByID := make(map[int64]RegisterBlock, len(existing))
+	for _, block := range existing {
+		existingByID[block.ID] = block
+	}
+	incomingIDs := make(map[int64]struct{}, len(blocks))
+	for _, block := range blocks {
+		if block.ID > 0 {
+			if _, ok := existingByID[block.ID]; !ok {
+				return ErrInvalid
+			}
+			incomingIDs[block.ID] = struct{}{}
+		}
+	}
+	for _, block := range existing {
+		if _, keep := incomingIDs[block.ID]; keep {
+			continue
+		}
+		if err := tx.Where("id=? AND device_id=?", block.ID, deviceID).Delete(&RegisterBlock{}).Error; err != nil {
+			return err
+		}
+	}
+	for index := range blocks {
+		block := blocks[index]
+		block.DeviceID = deviceID
+		block.UpdateTime = time.Now().UTC()
+		if block.ID == 0 {
+			if err := tx.Create(&block).Error; err != nil {
+				return err
+			}
+			blocks[index] = block
+			continue
+		}
+		if err := tx.Model(&RegisterBlock{}).Where("id=? AND device_id=?", block.ID, deviceID).Updates(map[string]any{
+			"name": block.Name, "function_code": block.FunctionCode, "start_address": block.StartAddress,
+			"quantity": block.Quantity, "sort_order": block.SortOrder, "update_time": block.UpdateTime,
+		}).Error; err != nil {
+			return err
+		}
+		blocks[index] = block
+	}
+	return nil
 }
 
 func normalizeChannelQuery(q ChannelQuery) ChannelQuery {

@@ -21,18 +21,19 @@ func must(err error) {
 	}
 }
 
-func checkState(store *acquisition.CurrentStateStore, id int64, voltage float64) {
+func checkState(store *acquisition.CurrentStateStore, id int64, holdingFirst, inputFirst uint16) {
 	state, ok := store.Get(id)
-	if !ok || state.Status != acquisition.StatusOnline || state.LastError != "" ||
-		state.Data.Voltage != voltage || state.Data.Current != 12.5 ||
-		state.Data.ActivePower != 123.4 || state.Data.Frequency != 50 ||
-		state.Data.PowerFactor != .98 || state.Data.Status != 0 || len(state.FieldValidity) != 6 {
+	if !ok || state.Status != acquisition.StatusOnline || state.LastError != "" || len(state.RegisterBlocks) != 2 {
 		panic(fmt.Sprintf("unexpected acquisition state: %+v", state))
 	}
-	for field, valid := range state.FieldValidity {
-		if !valid {
-			panic("invalid field " + field)
-		}
+	holding, input := state.RegisterBlocks[0], state.RegisterBlocks[1]
+	if holding.FunctionCode != acquisition.FunctionCodeReadHoldingRegisters || holding.StartAddress != 0 || holding.Quantity != 2 || !holding.Valid ||
+		holding.Values[0] == nil || *holding.Values[0] != holdingFirst || holding.Values[1] == nil || *holding.Values[1] != 125 {
+		panic(fmt.Sprintf("unexpected FC03 block: %+v", holding))
+	}
+	if input.FunctionCode != acquisition.FunctionCodeReadInputRegisters || input.StartAddress != 0 || input.Quantity != 1 || !input.Valid ||
+		input.Values[0] == nil || *input.Values[0] != inputFirst {
+		panic(fmt.Sprintf("unexpected FC04 block: %+v", input))
 	}
 	body, err := json.Marshal(state)
 	must(err)
@@ -42,7 +43,8 @@ func checkState(store *acquisition.CurrentStateStore, id int64, voltage float64)
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	for _, alias := range []string{"/tmp/modbus-rtu0", "/tmp/modbus-rtu1"} {
+	rtu0Alias := envOr("ADR0014_RTU0", "/tmp/modbus-rtu0")
+	for _, alias := range []string{rtu0Alias, envOr("ADR0014_RTU1", "/tmp/modbus-rtu1")} {
 		channel := acquisition.Channel{ID: 1, Name: "simulator", Port: alias,
 			BaudRate: 9600, DataBits: 8, Parity: "N", StopBits: 1, TimeoutMS: 150, Enabled: 1}
 		session, err := acquisition.NewModbusSessionFactory()(channel)
@@ -50,15 +52,24 @@ func main() {
 		must(session.Open())
 		store := acquisition.NewCurrentStateStore()
 		devices := []acquisition.Device{{ID: 1, Name: "feeder-1", ChannelID: 1, SlaveID: 1,
-			DeviceType: acquisition.DeviceTypeFeedProtector, FailureThreshold: 3, Enabled: 1}}
-		if alias == "/tmp/modbus-rtu0" {
+			DeviceType: acquisition.DeviceTypeFeedProtector, FailureThreshold: 3, Enabled: 1,
+			RegisterBlocks: []acquisition.RegisterBlock{
+				{ID: 101, Name: "holding", FunctionCode: acquisition.FunctionCodeReadHoldingRegisters, StartAddress: 0, Quantity: 2, SortOrder: 0},
+				{ID: 102, Name: "input", FunctionCode: acquisition.FunctionCodeReadInputRegisters, StartAddress: 0, Quantity: 1, SortOrder: 1},
+			}}}
+		if alias == rtu0Alias {
 			devices = append(devices, acquisition.Device{ID: 2, Name: "feeder-2", ChannelID: 1, SlaveID: 2,
-				DeviceType: acquisition.DeviceTypeFeedProtector, FailureThreshold: 3, Enabled: 1})
+				DeviceType: acquisition.DeviceTypeFeedProtector, FailureThreshold: 3, Enabled: 1,
+				RegisterBlocks: []acquisition.RegisterBlock{
+					{ID: 201, Name: "holding", FunctionCode: acquisition.FunctionCodeReadHoldingRegisters, StartAddress: 0, Quantity: 2, SortOrder: 0},
+					{ID: 202, Name: "input", FunctionCode: acquisition.FunctionCodeReadInputRegisters, StartAddress: 0, Quantity: 1, SortOrder: 1},
+				}})
 		}
 		must(acquisition.PollChannelOnce(ctx, channel, devices, session, store))
-		checkState(store, 1, 300)
+		inputFirst := uint16(42)
+		checkState(store, 1, 3000, inputFirst)
 		if len(devices) == 2 {
-			checkState(store, 2, 310)
+			checkState(store, 2, 3100, 43)
 			devices[0].SlaveID = 99 // Unknown slave: real timeout, other slave still collects.
 			for i := 0; i < 3; i++ {
 				must(acquisition.PollChannelOnce(ctx, channel, devices, session, store))
@@ -67,13 +78,17 @@ func main() {
 			if state.Status != acquisition.StatusOffline || state.ConsecutiveFailures != 3 || state.LastError == "" {
 				panic(fmt.Sprintf("expected offline: %+v", state))
 			}
-			checkState(store, 2, 310)
+			checkState(store, 2, 3100, 43)
 			devices[0].SlaveID = 1
 			must(acquisition.PollChannelOnce(ctx, channel, devices, session, store))
-			checkState(store, 1, 300)
+			checkState(store, 1, 3000, inputFirst)
 			fmt.Println("PASS real Go timeout -> OFFLINE, other slave ONLINE, recovery -> ONLINE")
 		}
 		must(session.Close())
+	}
+	if os.Getenv("GO_SMOKE_RT_ONLY") == "1" {
+		fmt.Fprintln(os.Stdout, "ALL GO RTU SMOKE CHECKS PASSED")
+		return
 	}
 	for _, url := range []string{"tcp://127.0.0.1:1502", "udp://127.0.0.1:1600", "rtuoverudp://127.0.0.1:1700"} {
 		client, err := modbus.NewClient(&modbus.ClientConfiguration{URL: url, Timeout: time.Second,
@@ -97,4 +112,11 @@ func main() {
 		must(client.Close())
 	}
 	fmt.Fprintln(os.Stdout, "ALL GO SMOKE CHECKS PASSED")
+}
+
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

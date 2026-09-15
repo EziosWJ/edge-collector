@@ -18,9 +18,9 @@ func TestPollChannelOnceContinuesAfterOneDeviceFails(t *testing.T) {
 		errors: map[uint8]error{2: errors.New("device timeout")},
 	}
 	devices := []Device{
-		{ID: 1, Name: "设备 1", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, FailureThreshold: 3},
-		{ID: 2, Name: "设备 2", ChannelID: 9, SlaveID: 2, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, FailureThreshold: 3},
-		{ID: 3, Name: "设备 3", ChannelID: 9, SlaveID: 3, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, FailureThreshold: 3},
+		{ID: 1, Name: "设备 1", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, FailureThreshold: 3, RegisterBlocks: testBlocks(11)},
+		{ID: 2, Name: "设备 2", ChannelID: 9, SlaveID: 2, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, FailureThreshold: 3, RegisterBlocks: testBlocks(12)},
+		{ID: 3, Name: "设备 3", ChannelID: 9, SlaveID: 3, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, FailureThreshold: 3, RegisterBlocks: testBlocks(13)},
 	}
 
 	if err := PollChannelOnce(context.Background(), Channel{ID: 9}, devices, session, store); err != nil {
@@ -45,6 +45,57 @@ func TestPollChannelOnceContinuesAfterOneDeviceFails(t *testing.T) {
 	}
 }
 
+func TestPollDeviceOnceReadsConfiguredBlocksInOrderAndKeepsGoing(t *testing.T) {
+	store := NewCurrentStateStore()
+	session := &fakeModbusSession{
+		registers: map[uint8][]uint16{1: {100, 200, 300}},
+		requestErrors: map[runtimeRegisterCall]error{
+			{slaveID: 1, functionCode: FunctionCodeReadHoldingRegisters, address: 0, quantity: 2}: errors.New("holding timeout"),
+		},
+	}
+	device := Device{
+		ID: 20, Name: "设备 20", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector,
+		FailureThreshold: 3, Enabled: Enabled, RegisterBlocks: []RegisterBlock{
+			{ID: 201, Name: "保持", FunctionCode: FunctionCodeReadHoldingRegisters, StartAddress: 0, Quantity: 2, SortOrder: 0},
+			{ID: 202, Name: "输入", FunctionCode: FunctionCodeReadInputRegisters, StartAddress: 0, Quantity: 1, SortOrder: 1},
+		},
+	}
+
+	PollChannelOnce(context.Background(), Channel{ID: 9}, []Device{device}, session, store)
+	state, ok := store.Get(device.ID)
+	if !ok || state.Status != StatusDegraded {
+		t.Fatalf("state = %#v, exists=%v, want degraded after one block failure", state, ok)
+	}
+	if state.RegisterBlocks[0].Valid || !state.RegisterBlocks[1].Valid || state.RegisterBlocks[1].Values[0] == nil || *state.RegisterBlocks[1].Values[0] != 100 {
+		t.Fatalf("block states = %#v, want failed FC03 and successful FC04", state.RegisterBlocks)
+	}
+	want := []runtimeRegisterCall{
+		{slaveID: 1, functionCode: FunctionCodeReadHoldingRegisters, address: 0, quantity: 2},
+		{slaveID: 1, functionCode: FunctionCodeReadInputRegisters, address: 0, quantity: 1},
+	}
+	if !equalRuntimeRegisterCalls(session.calls, want) {
+		t.Fatalf("register calls = %#v, want %#v", session.calls, want)
+	}
+}
+
+func TestActiveChannelConfigsExcludesDevicesWithoutRegisterBlocks(t *testing.T) {
+	configs := activeChannelConfigs(
+		[]Channel{{ID: 9, Enabled: Enabled}},
+		[]Device{
+			{ID: 1, ChannelID: 9, Enabled: Enabled},
+			{ID: 2, ChannelID: 9, Enabled: Enabled, RegisterBlocks: testBlocks(21)},
+		},
+	)
+
+	config, ok := configs[9]
+	if !ok {
+		t.Fatal("active channel config missing, want configured device")
+	}
+	if len(config.devices) != 1 || config.devices[0].ID != 2 {
+		t.Fatalf("active devices = %#v, want only device with register blocks", config.devices)
+	}
+}
+
 func TestRuntimeRefreshRemovesDisabledDeviceState(t *testing.T) {
 	store := NewCurrentStateStore()
 	session := &fakeModbusSession{
@@ -53,7 +104,7 @@ func TestRuntimeRefreshRemovesDisabledDeviceState(t *testing.T) {
 		},
 	}
 	channel := Channel{ID: 9, Enabled: Enabled}
-	device := Device{ID: 1, Name: "设备 1", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, PollIntervalMS: 60000, FailureThreshold: 3}
+	device := Device{ID: 1, Name: "设备 1", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, PollIntervalMS: 60000, FailureThreshold: 3, RegisterBlocks: testBlocks(11)}
 
 	var mu sync.Mutex
 	enabled := true
@@ -120,11 +171,13 @@ func TestRuntimeRefreshRemovesDisabledDeviceState(t *testing.T) {
 }
 
 type fakeModbusSession struct {
-	mu        sync.Mutex
-	current   uint8
-	called    []uint8
-	registers map[uint8][]uint16
-	errors    map[uint8]error
+	mu            sync.Mutex
+	current       uint8
+	called        []uint8
+	calls         []runtimeRegisterCall
+	registers     map[uint8][]uint16
+	errors        map[uint8]error
+	requestErrors map[runtimeRegisterCall]error
 }
 
 func (s *fakeModbusSession) Open() error  { return nil }
@@ -141,15 +194,63 @@ func (s *fakeModbusSession) SetUnitID(id uint8) error {
 func (s *fakeModbusSession) ReadHoldingRegisters(_ context.Context, _ uint8, address, quantity uint16) ([]uint16, error) {
 	s.mu.Lock()
 	id := s.current
+	call := runtimeRegisterCall{slaveID: id, functionCode: FunctionCodeReadHoldingRegisters, address: address, quantity: quantity}
+	s.calls = append(s.calls, call)
 	s.mu.Unlock()
+	if err := s.requestErrors[call]; err != nil {
+		return nil, err
+	}
 	if err := s.errors[id]; err != nil {
 		return nil, err
 	}
 	registers := s.registers[id]
-	if address == 6 && quantity == 1 {
-		return []uint16{registers[6]}, nil
+	end := int(address) + int(quantity)
+	if int(address) < 0 || end > len(registers) {
+		return nil, errors.New("register range out of bounds")
 	}
-	return registers[:6], nil
+	return append([]uint16(nil), registers[address:end]...), nil
+}
+
+func (s *fakeModbusSession) ReadInputRegisters(ctx context.Context, slaveID uint8, address, quantity uint16) ([]uint16, error) {
+	s.mu.Lock()
+	call := runtimeRegisterCall{slaveID: s.current, functionCode: FunctionCodeReadInputRegisters, address: address, quantity: quantity}
+	s.calls = append(s.calls, call)
+	s.mu.Unlock()
+	if err := s.requestErrors[call]; err != nil {
+		return nil, err
+	}
+	if err := s.errors[slaveID]; err != nil {
+		return nil, err
+	}
+	registers := s.registers[slaveID]
+	end := int(address) + int(quantity)
+	if end > len(registers) {
+		return nil, errors.New("register range out of bounds")
+	}
+	return append([]uint16(nil), registers[address:end]...), nil
+}
+
+type runtimeRegisterCall struct {
+	slaveID      uint8
+	functionCode int
+	address      uint16
+	quantity     uint16
+}
+
+func equalRuntimeRegisterCalls(left, right []runtimeRegisterCall) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func testBlocks(id int64) []RegisterBlock {
+	return []RegisterBlock{{ID: id, Name: "原始寄存器", FunctionCode: FunctionCodeReadHoldingRegisters, StartAddress: 0, Quantity: 7}}
 }
 
 func (s *fakeModbusSession) units() []uint8 {

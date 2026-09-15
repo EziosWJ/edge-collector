@@ -10,11 +10,11 @@
 
 在没有真实 Modbus 硬件时，为当前 Edge Collector 提供可重复启动、可配置、可观察的纯软件设备。模拟器用于协议联调、数据读取、异常处理和采集状态测试，不承担生产设备管理、历史存储或用户管理职责。
 
-成功标准是：当前 Go 采集代码可以通过 `/tmp/modbus-rtu0` 读取两个不同 Slave 的馈电保护器开发数据；同一模拟器也能提供 TCP、MBAP over UDP 和 RTU over UDP 的独立传输测试端点。
+成功标准是：Go 采集代码可以通过 `/tmp/modbus-rtu0` 读取两个不同 Slave 的原始寄存器值，并验证 FC03 / FC04 读取块；同一模拟器也能提供 TCP、MBAP over UDP 和 RTU over UDP 的独立传输测试端点。
 
 ## 2. 事实边界
 
-当前仓库能被源码确认的设备只有 `FEED_PROTECTOR`（馈电保护器），实际业务采集只使用 RS485 Modbus RTU、功能码 03。`edge-collector-api/internal/acquisition/protocol.go` 的注释明确说明当前寄存器映射是开发闭环替代映射；厂家寄存器表、告警寄存器和状态 bit 语义不在本 Spec 中臆定。
+当前仓库能被源码确认的设备只有 `FEED_PROTECTOR`（馈电保护器），实际业务采集只使用 RS485 Modbus RTU。`edge-collector-api/internal/acquisition/protocol.go` 中既有固定映射已被 ADR-0014 排除出第一阶段目标；厂家寄存器表、工程值、告警寄存器和状态 bit 语义不在本 Spec 中臆定。
 
 高开保护器、BMS、电池及匿名告警示例地址没有足够的设备身份、类型或采集代码依据，因此不生成对应设备 YAML。网络模式是模拟器和底层 Go 库的传输联调能力，当前 Go 业务 API 尚未提供网络采集配置。
 
@@ -22,16 +22,16 @@
 
 ### 3.1 默认设备
 
-| 文件 | 名称 | Slave ID | 所属默认通道 | 电压工程值 |
+| 文件 | 名称 | Slave ID | 所属默认通道 | 地址 0 raw |
 | --- | --- | ---: | --- | ---: |
-| `config/devices/feeder_protector_01.yaml` | 馈电保护器-01 | 1 | `rtu0`、`rtu1` | 300 V |
-| `config/devices/feeder_protector_02.yaml` | 馈电保护器-02 | 2 | `rtu0`、网络测试通道 | 310 V |
+| `config/devices/feeder_protector_01.yaml` | 馈电保护器-01 | 1 | `rtu0`、`rtu1` | 3000 |
+| `config/devices/feeder_protector_02.yaml` | 馈电保护器-02 | 2 | `rtu0`、网络测试通道 | 3100 |
 
 同一通道内 Slave / Unit ID 必须唯一；不同通道的设备状态和动态值相互独立。
 
 ### 3.2 寄存器映射
 
-地址为零基 Modbus 地址。当前 Go 代码分两次读取：`FC03 address=0 count=6`，再读取 `FC03 address=6 count=1`。
+地址为零基 Modbus 地址。默认 fixture 暴露 FC03 地址 0～6；Go 采集目标按设备读取块配置决定请求范围，不再固定拆成电气量和状态两次读取。
 
 | 地址 | 字段 | 原始类型 | 缩放 | 设备 1 默认 raw | 设备 1 工程值 |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -42,7 +42,7 @@
 | 5 | `powerFactor` | `uint16` | `/ 1000` | 980 | 0.98 |
 | 6 | `status` | `uint16` 原值 | `/ 1` | 0 | 0 |
 
-`activePower` 的厂家工程单位尚未从当前代码确认；`status` 没有已确认的运行、故障或告警位含义。设备 YAML 的 `bits` 保持为空，修改 `status.value` 只能测试原始状态字透传。
+表中的字段名、组合方式、缩放和工程值只服务于模拟器生成可重复 raw 数据，不进入 Go 第一阶段 API，也不代表厂家协议事实。设备 YAML 的 `bits` 保持为空。
 
 ### 3.3 配置类型
 
@@ -134,7 +134,7 @@ channels:
 
 1. `uv sync --locked` 和 `uv run modbus-simulator --check-config` 成功。
 2. Python 测试使用真实临时 socket 和 PTY 验证 TCP、UDP、RTU、RTU over UDP；覆盖 FC01/02/03/04/05/06/15/16、写后读回、多个 ID、CRC、非法包、地址、数量、功能码、延迟、动态值、PTY alias 锁和启动失败清理。
-3. 当前 Go `NewModbusSessionFactory → PollChannelOnce → ParseFeedProtectorRegisters → CurrentStateStore` 能从 `/tmp/modbus-rtu0` 读到两个 Slave 的开发值和全部有效字段。
+3. Go `NewModbusSessionFactory → 读取块轮询 → CurrentStateStore` 能从 `/tmp/modbus-rtu0` 读到两个 Slave 的 FC03 / FC04 原始寄存器值、地址和读取块有效性，不经过业务解析。
 4. 真实 Go 采集循环中，未知 Slave 连续失败 3 次进入 `OFFLINE`，同一 PTY 上另一 Slave 继续 `ONLINE`，恢复后回到 `ONLINE`。
 5. 项目现用 Go Modbus 客户端能通过 `tcp://127.0.0.1:1502`、`udp://127.0.0.1:1600`、`rtuoverudp://127.0.0.1:1700` 读取 Unit 1、2。
 6. 停止模拟器后 `/tmp/modbus-rtu0`、`/tmp/modbus-rtu1` alias 被清理；下次启动得到新的 `/dev/pts/N` 指向。

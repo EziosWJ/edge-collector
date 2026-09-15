@@ -2,7 +2,7 @@
 
 当前 Go 采集服务的纯软件设备模拟器，用于开发联调、读取测试和异常测试。独立 Python 项目，不修改 Go 配置、数据库或依赖，不需要硬件、socat、Web UI 或其他辅助服务。
 
-**协议依据：当前仓库仅实现馈电保护器 `FEED_PROTECTOR`，且使用开发用映射，并非厂家确认协议。** 不应拿本工具的数值、地址或状态字语义作为真实硬件验收依据。完整核对记录见 [PROTOCOL_FINDINGS.md](PROTOCOL_FINDINGS.md)。
+**协议依据：本工具提供原始寄存器联调夹具，不包含厂家协议解析。** `FEED_PROTECTOR` 只保留为现有设备身份示例；不要把模拟器标签、数值或状态字解释为真实硬件语义。完整核对记录见 [PROTOCOL_FINDINGS.md](PROTOCOL_FINDINGS.md)。
 
 ## 环境与启动
 
@@ -42,21 +42,22 @@ uv run modbus-simulator --check-config
 ## 配置与设备映射
 
 - `config/simulator.yaml`：日志、通道、串口参数和设备文件列表。
-- `config/devices/feeder_protector_01.yaml`：Slave 1，电压 300。
-- `config/devices/feeder_protector_02.yaml`：Slave 2，电压 310。
+- `config/devices/feeder_protector_01.yaml`：Slave 1，holding 原始值从 3000 开始，input 样例值 42。
+- `config/devices/feeder_protector_02.yaml`：Slave 2，holding 原始值从 3100 开始，input 样例值 43。
 
-所有地址为线上 **零基地址**，不是 40001 风格的显示编号。两台设备只有下列 holding registers；不镜像为 input registers，也不擅自分配 coil。
+所有地址为线上 **零基地址**，不是 40001 风格的显示编号。以下是 raw 联调数据；holding 和 input 是两个独立寄存器空间。
 
-| 地址 | 字段 | 类型 | scale | 设备 1 工程值 | 线上 raw |
+| 区域 | 地址 | 测试标签 | 类型 | Slave 1 raw | Slave 2 raw |
 |---|---|---|---|---|---|
-| 0 | voltage | uint16 | 0.1 | 300 V | 3000 |
-| 1 | current | uint16 | 0.1 | 12.5 A | 125 |
-| 2–3 | activePower | uint32 | 0.1 | 123.4 | `[0, 1234]` |
-| 4 | frequency | uint16 | 0.01 | 50 Hz | 5000 |
-| 5 | powerFactor | uint16 | 0.001 | 0.98 | 980 |
-| 6 | status | uint16 | 1 | 0 | 0 |
+| holding | 0 | sample-0 | uint16 | 3000 | 3100 |
+| holding | 1 | sample-1 | uint16 | 125 | 125 |
+| holding | 2–3 | sample-2/3 | uint16 | 0 / 1234 | 0 / 1234 |
+| holding | 4 | sample-4 | uint16 | 5000 | 5000 |
+| holding | 5 | sample-5 | uint16 | 980 | 980 |
+| holding | 6 | sample-6 | uint16 | 0 | 0 |
+| input | 0 | input_sample | uint16 | 42 | 43 |
 
-有功功率的具体工程单位未在解析代码中确认，不擅自写成厂家定义。status 是原始数值，`0/1` 没有已确认的正常/故障/运行含义。
+这些值仅用于验证 FC03/FC04、地址、数量和显示进制；系统不把它们转换为电压、电流、功率、单位或状态语义。
 
 `value`、动态模拟的 min/max/step 均使用**工程值**：`raw = value / scale`。整数寄存器必须可以精确表示该值；越界、重叠、非法字节序、重复 ID 等会在启动前拒绝。`length` 可省略；填写时必须匹配类型。
 
@@ -163,15 +164,19 @@ RTU/UDP TX: 01 03 0E 0B B8 00 7D 00 00 04 D2 13 88 03 D4 00 00 84 F4
   "slaveId": 1,
   "pollIntervalMs": 1000,
   "failureThreshold": 3,
-  "enabled": 1
+  "enabled": 1,
+  "registerBlocks": [
+    {"name": "holding-sample", "functionCode": 3, "startAddress": 0, "quantity": 2, "sortOrder": 0},
+    {"name": "input-sample", "functionCode": 4, "startAddress": 0, "quantity": 1, "sortOrder": 1}
+  ]
 }
 ```
 
 再添加 Slave 2 即可在同一总线采集第二台。第二路用 `/tmp/modbus-rtu1`，Slave 1。REST API 沿用项目现有登录认证。
 
-配置保存后**重启 Go API**；它只在启动时加载启用配置。按项目 Taskfile 启动：根目录 `task api`（SQLite profile 使用 `task api:sqlite`）；新库先运行对应 `task db:migrate` / `task db:migrate:sqlite`。API 存活用 `/health`、数据库就绪用 `/ready`；当前数据为 `/api/v1/acquisition/states`。
+配置保存后由运行中的 Go API 在当前采集周期结束后热刷新；按项目 Taskfile 启动：根目录 `task api`（SQLite profile 使用 `task api:sqlite`）；新库先运行对应 `task db:migrate` / `task db:migrate:sqlite`。API 存活用 `/health`、数据库就绪用 `/ready`；当前数据为 `/api/v1/acquisition/states`。
 
-实际 Go 每轮读 FC03 `0+6` 和 `6+1`，应得到 voltage=300/310、current=12.5、activePower=123.4、frequency=50、powerFactor=0.98、status=0，全部字段有效。
+实际 Go 每轮按数据库中的读取块读取 FC03 和 FC04，`/api/v1/acquisition/states` 返回 `registerBlocks` 及其 raw `uint16` 值；页面负责 HEX/DEC/BIN 显示，不做业务解析。
 
 ### TCP / UDP / RTU over UDP
 
@@ -213,7 +218,7 @@ uv run python scripts/go_smoke.py
 
 需保持默认 YAML 数值和端口。脚本把 Go harness 放在 `/tmp` 临时 module 中，通过本地 replace 引用真实后端模块，不修改后端 go.mod、go.sum 或数据库；默认 GOCACHE 为 `/tmp/modbus-go-build`。首次编译需现有依赖缓存或可访问 Go 模块源。
 
-脚本直接执行真实 `NewModbusSessionFactory → PollChannelOnce → ParseFeedProtectorRegisters → CurrentStateStore`，检查业务值、字段有效性与 ONLINE 状态；再执行三次未知 Slave 超时，检查 OFFLINE、同总线另一 Slave 继续 ONLINE，以及恢复成功。随后对三个网络端点执行真实 Go 库读取。整体进程有 180 秒编译/运行上限，Go 采集检查有 15 秒上下文期限。
+脚本直接执行真实 `NewModbusSessionFactory → PollChannelOnce → CurrentStateStore`，按配置读取 FC03/FC04 原始寄存器并检查 `registerBlocks`、ONLINE 状态和 raw 值；再执行三次未知 Slave 超时，检查 OFFLINE、同总线另一 Slave 继续 ONLINE，以及恢复成功。随后对三个网络端点执行真实 Go 库读取。整体进程有 180 秒编译/运行上限，Go 采集检查有 15 秒上下文期限。
 
 本次实际验收结果见 [TEST_RESULTS.md](TEST_RESULTS.md)。没有启动完整 API/数据库/UI 链路，不能将模块级真实串口联调等同于完整页面验收。
 

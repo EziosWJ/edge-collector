@@ -1,4 +1,4 @@
-# 依据 internal/acquisition/protocol.go 的开发映射，不是厂家确认协议。
+# 原始寄存器联调夹具，不代表厂家协议或业务字段语义。
 name: 馈电保护器-02
 slave_id: 2
 source: edge-collector-api/internal/acquisition/protocol.go
@@ -56,3 +56,10 @@ registers:
     length: 1
     value: 0
     bits: {}
+  - name: input_sample
+    description: FC04 原始输入寄存器样例
+    area: input_register
+    address: 0
+    type: uint16
+    length: 1
+    value: 43

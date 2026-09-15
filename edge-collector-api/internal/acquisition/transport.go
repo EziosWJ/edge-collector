@@ -57,6 +57,10 @@ func (s *modbusSession) ReadHoldingRegisters(_ context.Context, _ uint8, address
 	return s.client.ReadRegisters(address, quantity, modbus.HOLDING_REGISTER)
 }
 
+func (s *modbusSession) ReadInputRegisters(_ context.Context, _ uint8, address, quantity uint16) ([]uint16, error) {
+	return s.client.ReadRegisters(address, quantity, modbus.INPUT_REGISTER)
+}
+
 func modbusParity(value string) (uint, error) {
 	switch value {
 	case "", "N", "n":

@@ -149,8 +149,22 @@ func TestSQLiteSharedHTTPBusinessContract(t *testing.T) {
 	if channelPage.Code != http.StatusOK || !strings.Contains(channelPage.Body.String(), `"name":"SQLite RS485"`) {
 		t.Fatalf("SQLite acquisition channels = %d %s", channelPage.Code, channelPage.Body.String())
 	}
-	createdDevice := serveJSON(router, http.MethodPost, "/api/v1/acquisition/devices", `{"name":"SQLite馈电保护器","deviceType":"FEED_PROTECTOR","channelId":1,"slaveId":1,"pollIntervalMs":1000,"failureThreshold":3,"enabled":1}`, adminToken)
+	createdDevice := serveJSON(router, http.MethodPost, "/api/v1/acquisition/devices", `{"name":"SQLite馈电保护器","deviceType":"FEED_PROTECTOR","channelId":1,"slaveId":1,"pollIntervalMs":1000,"failureThreshold":3,"enabled":1,"registerBlocks":[{"name":"测量值","functionCode":3,"startAddress":0,"quantity":2,"sortOrder":0},{"name":"输入状态","functionCode":4,"startAddress":0,"quantity":1,"sortOrder":1}]}`, adminToken)
 	assertEnvelopeCode(t, createdDevice, http.StatusOK, 200, "success")
+	if !strings.Contains(createdDevice.Body.String(), `"functionCode":3`) || !strings.Contains(createdDevice.Body.String(), `"functionCode":4`) {
+		t.Fatalf("SQLite created device missing register blocks: %s", createdDevice.Body.String())
+	}
+	deviceDetail := serveJSON(router, http.MethodGet, "/api/v1/acquisition/devices/1", "", adminToken)
+	if deviceDetail.Code != http.StatusOK || !strings.Contains(deviceDetail.Body.String(), `"name":"输入状态"`) {
+		t.Fatalf("SQLite device detail missing register blocks: %d %s", deviceDetail.Code, deviceDetail.Body.String())
+	}
+	replacedDevice := serveJSON(router, http.MethodPut, "/api/v1/acquisition/devices/1", `{"name":"SQLite馈电保护器","deviceType":"FEED_PROTECTOR","channelId":1,"slaveId":1,"pollIntervalMs":1000,"failureThreshold":3,"enabled":1,"registerBlocks":[{"name":"输入状态","functionCode":3,"startAddress":10,"quantity":1,"sortOrder":0}]}`, adminToken)
+	assertEnvelopeCode(t, replacedDevice, http.StatusOK, 200, "success")
+	if !strings.Contains(replacedDevice.Body.String(), `"startAddress":10`) {
+		t.Fatalf("SQLite same-name register block replacement failed: %s", replacedDevice.Body.String())
+	}
+	overlappingDevice := serveJSON(router, http.MethodPost, "/api/v1/acquisition/devices", `{"name":"重叠配置","deviceType":"FEED_PROTECTOR","channelId":1,"slaveId":2,"pollIntervalMs":1000,"failureThreshold":3,"enabled":1,"registerBlocks":[{"name":"块一","functionCode":3,"startAddress":0,"quantity":2,"sortOrder":0},{"name":"块二","functionCode":3,"startAddress":1,"quantity":1,"sortOrder":1}]}`, adminToken)
+	assertEnvelopeCode(t, overlappingDevice, http.StatusBadRequest, 400, acquisition.ErrInvalid.Error())
 	devicePage := serveJSON(router, http.MethodGet, "/api/v1/acquisition/devices?page=1&pageSize=20", "", adminToken)
 	if devicePage.Code != http.StatusOK || !strings.Contains(devicePage.Body.String(), `"name":"SQLite馈电保护器"`) {
 		t.Fatalf("SQLite acquisition devices = %d %s", devicePage.Code, devicePage.Body.String())

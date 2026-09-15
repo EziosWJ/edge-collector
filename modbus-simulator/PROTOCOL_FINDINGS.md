@@ -1,6 +1,6 @@
 # 编码前协议核对
 
-核对日期：2026-09-14。以实际代码为依据；不改变后端现有开发映射。
+核对日期：2026-09-14。以下为 ADR-0014 之前的历史核对；当前后端已改为读取配置驱动的原始寄存器，不再使用固定业务解析映射。
 
 ## 检查范围与文件
 
@@ -14,7 +14,7 @@
 | `docs/design/phase-1-decisions-summary.md`、`phase-1-ticket-breakdown.md` | 第一阶段实施范围 |
 | `docs/adr/0011-phase-one-rs485-modbus-rtu-acquisition.md` | 馈电 RTU 决策、后续协议边界 |
 | 根目录 `README.md`、`CONTEXT.md` | 项目上下文 |
-| `edge-collector-api/internal/acquisition/protocol.go`、`protocol_test.go` | FC03 地址 0–6、倍率、uint32 高字前、分组读取 |
+| `edge-collector-api/internal/acquisition/protocol.go`、`protocol_test.go` | 读取块驱动的 FC03/FC04 原始 `uint16` |
 | 同模块 `transport.go` | `rtu://` 串口会话，Unit 切换、timeout |
 | 同模块 `model.go`、`service.go`、`repository.go`、`handler.go` | 唯一设备类型、通道/设备配置与 REST |
 | 同模块 `runtime.go`、`runtime_test.go`、`state.go` | 实时采集、部分失败、离线恢复 |
@@ -26,8 +26,8 @@
 ## 识别结果及冲突
 
 1. 唯一实际设备：`FEED_PROTECTOR` 馈电保护器，RS485 Modbus RTU，Slave ID 可配置。
-2. 唯一实际采集功能码：03；读取 holding 地址 `0,count=6`，再读 `6,count=1`。字段及 raw 映射详见 README。
-3. 代码无厂家表，`ParseFeedProtectorRegisters` 注释明确该映射只是开发闭环替代实现。ADR/技术设计声称协议资料齐备，与当前可见资料和代码注释冲突。本模拟器优先匹配代码，并在设备 YAML 标明来源。
+2. ADR-0014 后，实际采集功能码由设备读取块配置决定，当前支持 FC03 和 FC04；模拟器用原始 holding/input 数据验证地址、数量和功能码。
+3. 代码无厂家表，也没有当前活动的 `ParseFeedProtectorRegisters` 业务解析。模拟器中的 `feeder_protector` 文件名和历史测试标签仅用于兼容已有夹具，不代表协议语义。
 4. 高开保护器只在需求中，没有可确认寄存器和类型，未生成高开配置；不存在已证实的 BMS/电池/PowerBox 设备。
 5. status 只透传 uint16，无 bit、枚举或故障码语义；测试样本中出现数值不代表正常/运行状态。配置保留空 bits，不编造含义。
 6. 全产品需求中告警示例涉及 `812`、`8166`、`8167–8180`，缺少具体设备身份、功能码、完整类型和位定义，当前代码也不采集。因此没有把它们当作馈电寄存器实现。
@@ -36,10 +36,10 @@
 
 ## 实现前确定的设备配置
 
-- `config/devices/feeder_protector_01.yaml`：Slave 1。
-- `config/devices/feeder_protector_02.yaml`：Slave 2，同类第二台，电压区别为 310。
+- `config/devices/feeder_protector_01.yaml`：Slave 1，提供 holding 和 input 原始寄存器夹具。
+- `config/devices/feeder_protector_02.yaml`：Slave 2，提供第二套 holding 和 input 原始寄存器夹具。
 - RTU0 挂载两台，RTU1 挂载 Slave 1；TCP、两种 UDP 复用两台配置，各通道独立存储。
-- 实际默认设备不提供 FC04/coil 寄存器；通用协议能力由独立测试夹具覆盖。
+- 当前 Go smoke 为每台设备配置一个 FC03 块和一个 FC04 块；coil 等其他功能码仍由独立模拟器测试覆盖。
 
 ## PyModbus API 核对
 

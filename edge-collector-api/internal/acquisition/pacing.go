@@ -50,6 +50,18 @@ func (s *pacedSession) SetUnitID(id uint8) error {
 }
 
 func (s *pacedSession) ReadHoldingRegisters(ctx context.Context, slaveID uint8, address, quantity uint16) ([]uint16, error) {
+	return s.read(ctx, func() ([]uint16, error) {
+		return s.underlying.ReadHoldingRegisters(ctx, slaveID, address, quantity)
+	})
+}
+
+func (s *pacedSession) ReadInputRegisters(ctx context.Context, slaveID uint8, address, quantity uint16) ([]uint16, error) {
+	return s.read(ctx, func() ([]uint16, error) {
+		return s.underlying.ReadInputRegisters(ctx, slaveID, address, quantity)
+	})
+}
+
+func (s *pacedSession) read(ctx context.Context, operation func() ([]uint16, error)) ([]uint16, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -61,7 +73,7 @@ func (s *pacedSession) ReadHoldingRegisters(ctx context.Context, slaveID uint8, 
 			}
 		}
 	}
-	registers, err := s.underlying.ReadHoldingRegisters(ctx, slaveID, address, quantity)
+	registers, err := operation()
 	s.lastCompleted = s.now()
 	return registers, err
 }
