@@ -15,10 +15,9 @@ project/
 **避免全量读取脚手架项目，按需读取：**
 
 1. **不要递归列出** `react-admin/` 或 `edge-collector-api/` 全部文件
-2. **先读 task 文件**（`task/`）了解当前任务范围，再针对性读源码
-3. **用 Explore agent 搜索**，而不是直接 Read 整个目录
-4. **一次只读一个子模块**（如 `src/components/UserTable.tsx`），不要批量读整个目录
-5. **需要架构参考时**，只读 `docs/` 或 `experience/` 下的摘要文件
+2. **用 Explore agent 搜索**，而不是直接 Read 整个目录
+3. **一次只读一个子模块**（如 `src/components/UserTable.tsx`），不要批量读整个目录
+4. **需要架构参考时**，只读 `docs/` 或 `experience/` 下的摘要文件
 
 ## 工作模式
 
