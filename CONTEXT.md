@@ -28,25 +28,30 @@
 
 ## Edge Collector 领域词汇（已确认）
 
-- **通信通道**：现场设备通信所使用的 RS485、TCP 或 UDP 通道。
-- **设备**：通过某个通信通道接入 Edge Collector 的现场工业设备。
+- **通信通道**：使用同一种 Modbus 传输协议、共享串行轮询调度的一组设备。通道表达轮询分组和协议边界，不要求等同于一条物理介质，也不是网络设备的 `host:port`；同一通道任一时刻只执行一个 Modbus transaction，不同通道可以并行运行。
+- **Modbus 传输协议**：通信通道选择的 Modbus framing / transport 组合。当前确认枚举为 `MODBUS_RTU`、`MODBUS_TCP`、`MODBUS_UDP`、`MODBUS_RTU_OVER_UDP`，通道创建后协议不可修改。
+- **设备**：通过某个通信通道接入 Edge Collector 的现场工业设备。设备属于且只属于一个通道；允许移动到相同协议的其他通道，不允许直接跨协议移动。
+- **网络设备端点**：网络设备自身的远端 `host:port`。它属于设备而不是通信通道；`host` 可以是 IPv4、IPv6 或 hostname，端口显式配置。同一网络通道可以包含多个不同 endpoint。
+- **Unit ID**：Modbus 设备在一次协议事务中的单元标识。`MODBUS_RTU` 与 `MODBUS_RTU_OVER_UDP` 中表示 Slave Address，范围 `1～247`；`MODBUS_TCP` 与 `MODBUS_UDP` 中表示 MBAP Unit Identifier，范围 `0～255`。网络设备的唯一寻址由 `host:port + Unit ID` 共同确定，因此不同 endpoint 可以使用相同 Unit ID。
 - **实时数据**：设备运行期间持续轮询得到的当前数据；它可以是尚未解释的原始寄存器数据，也可以是后续按设备协议解释形成的业务实时数据。
 - **原始寄存器数据**：Modbus 响应经过传输校验后得到的、按地址排列的 16-bit 无符号寄存器值；不包含有符号数或浮点解释、多寄存器组合、比例换算、单位和状态位语义。
 - **业务实时数据**：依据具体设备协议，将原始寄存器数据解释、组合和换算后形成的有业务含义的数据。
 - **实时寄存器**：启用设备按照寄存器读取块持续采集形成的最新原始寄存器数据及其有效性状态；它不是业务实时数据，也不是寄存器历史记录。
 - **寄存器读取块**：为设备配置的一段连续 Modbus 寄存器读取范围，由功能码、零基起始地址和寄存器数量确定；它描述采集范围，不描述寄存器的业务语义。
 - **采集周期**：同一设备两次完整采集之间的目标等待时长，用于控制该设备的实时数据刷新频率；它不表示同一通道连续报文之间的等待时间。
-- **报文间隔延迟**：同一通信通道连续两次 Modbus 请求之间增加的业务等待时长，作用于同一设备的连续读取和通道内不同设备之间的读取；它不替代 Modbus RTU 协议规定的帧间静默时间。
+- **报文间隔延迟**：同一通信通道连续两次 Modbus 请求之间增加的业务等待时长，作用于同一设备的连续读取和通道内不同设备之间的读取；四种 Modbus 传输协议统一使用该语义，它不替代 Modbus RTU 协议规定的帧间静默时间。
+- **通道运行状态**：由通道内启用设备的当前通信状态聚合得到的进程内运行状态，取值为 `IDLE`、`STARTING`、`ONLINE`、`DEGRADED`、`OFFLINE`；不维护独立于设备失败阈值的通道连续失败计数。
 - **告警状态**：需要持续轮询检查、用于判断设备是否产生新告警的状态。
 - **告警详情**：告警触发后，按照具体设备协议进一步查询得到并需要即时上报的信息。
 - **控制指令**：上级平台通过 MQTT 下发、要求 Edge Collector 对目标设备执行的操作。
 - **MQTT 上报**：Edge Collector 作为 MQTT Client 向上级 Broker 发送实时数据、告警、设备状态或控制结果。
 - **Modbus Server**：Edge Collector 面向其他设备或系统提供的 Modbus 数据服务，其对外地址不要求等同于现场设备原始寄存器地址。
-- **Modbus 模拟器**：供开发和协议联调用的纯软件 Modbus 设备，不代表真实厂家的寄存器表或设备语义。
-- **RTU over UDP**：把完整 Modbus RTU 帧作为单个 UDP Payload 传输的通信方式；它与 MBAP + PDU over UDP 分开处理。
+- **Modbus 模拟器**：供开发和协议联调用的纯软件 Modbus 设备，不代表真实厂家的寄存器表或设备语义；多传输 Modbus 阶段在真实厂家网络设备验收前以它作为正式开发验收基线。
+- **Modbus UDP (MBAP)**：每个 UDP Datagram 由 MBAP Header + Modbus PDU 组成、不带 RTU CRC 的网络传输方式，对应协议枚举 `MODBUS_UDP`。
+- **RTU over UDP**：把完整 `Slave + Function Code + Data + CRC16` Modbus RTU 帧作为单个 UDP Payload 传输的通信方式，对应协议枚举 `MODBUS_RTU_OVER_UDP`；它与 Modbus UDP (MBAP) 分开处理。
 - **PTY alias**：模拟器为动态 `/dev/pts/N` slave 维护的固定软链接，供 Go 采集程序使用。
 
-> 当前需求基线见 `docs/requirements/edge-collector-requirements.md`。设备 Driver、调度器、任务类型、缓存结构等尚未确认，不作为当前领域词汇预先写入。
+> 当前需求基线见 `docs/requirements/edge-collector-requirements.md`。设备 Driver、任务类型、缓存结构等尚未确认，不作为当前领域词汇预先写入。多传输 Modbus 通道、设备寻址与运行状态决策见 `docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md`。
 
 ## 技术栈与演进状态
 
@@ -71,7 +76,7 @@
 - 可观测性: 使用 `log/slog` 记录 request_id、请求方法与路径、状态、耗时、user_id 和错误；`/health` 只检查进程存活，`/ready` 检查所选数据库并在不可用时返回 503，`/metrics` 不要求 JWT、仅通过内部网络或反向代理白名单供 Prometheus 抓取且不应用默认 CORS。业务审计日志须落库，不能由应用日志替代：middleware 将 request_id、IP、User-Agent 写入标准 `context.Context`，Service 显式记录审计，Repository 持久化；认证记录成功与失败登录，其他操作仅在业务成功后记录。
 - 其他目标组件: 本地文件系统加 Docker Volume（文件服务与存储实现解耦）、Excelize、Docker 与 Docker Compose；不提前引入 Kubernetes、OpenTelemetry tracing、Redis 分布式锁或微服务治理基础设施。Edge Collector 已确认需要作为 MQTT Client 与上级 Broker 通信；这里“不提前引入 MQ”仅指不为内部架构预设 RocketMQ/Kafka 等消息队列基础设施，不限制 MQTT 业务接入。
 
-通用架构取舍见 [ADR-0004](docs/adr/0004-backend-architecture-and-database-strategy.md)，SQLite 正式生产支持边界见 [ADR-0010](docs/adr/0010-sqlite-production-support.md)。
+通用架构取舍见 [ADR-0004](docs/adr/0004-backend-architecture-and-database-strategy.md)，SQLite 正式生产支持边界见 [ADR-0010](docs/adr/0010-sqlite-production-support.md)，多传输 Modbus 通道与网络设备寻址见 [ADR-0015](docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md)。
 
 ## Go 后端架构约定（目标实现必须遵守）
 
