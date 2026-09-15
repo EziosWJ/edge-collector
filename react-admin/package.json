@@ -9,6 +9,9 @@
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0",
     "test:datetime": "node tests/datetime.mjs",
+    "test:register-format": "node tests/register-format.mjs",
+    "test:realtime-null-state": "node tests/realtime-null-state.mjs",
+    "test:realtime-layout": "node tests/realtime-layout.mjs",
     "test:layout": "node tests/operation-column-layout.mjs",
     "test:route-loading": "node tests/route-loading.mjs"
   },

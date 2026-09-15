@@ -24,6 +24,7 @@ export type AcquisitionDevice = {
   pollIntervalMs: number;
   failureThreshold: number;
   enabled: ApiStatus;
+  registerBlocks: AcquisitionRegisterBlock[];
   createTime?: string | null;
   updateTime?: string | null;
 };
@@ -37,18 +38,39 @@ export type AcquisitionChannelInput = Omit<
   AcquisitionChannel,
   "id" | "createTime" | "updateTime"
 >;
+export type AcquisitionRegisterBlock = {
+  id: number;
+  name: string;
+  functionCode: 3 | 4;
+  startAddress: number;
+  quantity: number;
+  sortOrder: number;
+  createTime?: string | null;
+  updateTime?: string | null;
+};
+
+export type AcquisitionRegisterBlockInput = Omit<
+  AcquisitionRegisterBlock,
+  "id" | "createTime" | "updateTime"
+> & { id?: number };
+
 export type AcquisitionDeviceInput = Omit<
   AcquisitionDevice,
-  "id" | "createTime" | "updateTime"
->;
+  "id" | "createTime" | "updateTime" | "registerBlocks"
+> & { registerBlocks: AcquisitionRegisterBlockInput[] };
 
-export type FeedProtectorData = {
-  voltage: number;
-  current: number;
-  activePower: number;
-  frequency: number;
-  powerFactor: number;
-  status: number;
+export type AcquisitionRegisterBlockState = {
+  id: number;
+  name: string;
+  functionCode: 3 | 4;
+  startAddress: number;
+  quantity: number;
+  sortOrder: number;
+  values: Array<number | null>;
+  valid: boolean;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string;
 };
 
 export type AcquisitionCommunicationStatus =
@@ -62,9 +84,7 @@ export type AcquisitionCurrentState = {
   deviceName: string;
   channelId: number;
   slaveId: number;
-  data: FeedProtectorData;
-  fieldValidity: Record<string, boolean>;
-  fieldUpdatedAt: Record<string, string>;
+  registerBlocks: AcquisitionRegisterBlockState[];
   lastAttemptAt?: string | null;
   lastSuccessAt?: string | null;
   status: AcquisitionCommunicationStatus;

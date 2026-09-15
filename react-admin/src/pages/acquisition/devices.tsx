@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import {
   createAcquisitionDevice,
@@ -40,6 +40,32 @@ const deviceSchema = z.object({
   pollIntervalMs: z.coerce.number().int().positive("采集周期必须大于 0"),
   failureThreshold: z.coerce.number().int().positive("离线阈值必须大于 0"),
   enabled: z.coerce.number().pipe(z.union([z.literal(0), z.literal(1)])),
+  registerBlocks: z.array(z.object({
+    id: z.number().optional(),
+    name: z.string().trim().min(1, "读取块名称不能为空").max(100, "读取块名称不能超过 100 个字符"),
+    functionCode: z.coerce.number().int().refine((value) => value === 3 || value === 4, "功能码仅支持 FC03 或 FC04"),
+    startAddress: z.coerce.number().int().min(0, "起始地址不能小于 0").max(65535, "起始地址不能超过 65535"),
+    quantity: z.coerce.number().int().min(1, "数量范围为 1～125").max(125, "数量范围为 1～125"),
+    sortOrder: z.coerce.number().int().min(0, "顺序不能小于 0"),
+  })).superRefine((blocks, context) => {
+    const names = new Set<string>();
+    const intervals = new Map<number, Array<{ start: number; end: number }>>();
+    blocks.forEach((block, index) => {
+      if (names.has(block.name.trim())) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: [index, "name"], message: "读取块名称必须唯一" });
+      }
+      names.add(block.name.trim());
+      if (block.startAddress + block.quantity - 1 > 65535) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: [index, "quantity"], message: "起始地址与数量超出寄存器范围" });
+      }
+      const ranges = intervals.get(block.functionCode) ?? [];
+      if (ranges.some((range) => block.startAddress <= range.end && range.start <= block.startAddress + block.quantity - 1)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: [index, "startAddress"], message: "同一功能码的地址区间不能重叠" });
+      }
+      ranges.push({ start: block.startAddress, end: block.startAddress + block.quantity - 1 });
+      intervals.set(block.functionCode, ranges);
+    });
+  }),
 });
 
 type DeviceFormValues = z.infer<typeof deviceSchema>;
@@ -60,6 +86,7 @@ const emptyValues: DeviceFormValues = {
   pollIntervalMs: 1000,
   failureThreshold: 3,
   enabled: 1,
+  registerBlocks: [{ id: undefined, name: "", functionCode: 3, startAddress: 0, quantity: 1, sortOrder: 0 }],
 };
 
 function toFormValues(device?: AcquisitionDevice): DeviceFormValues {
@@ -72,12 +99,27 @@ function toFormValues(device?: AcquisitionDevice): DeviceFormValues {
         pollIntervalMs: device.pollIntervalMs,
         failureThreshold: device.failureThreshold,
         enabled: device.enabled,
+        registerBlocks: (device.registerBlocks ?? []).map((block, index) => ({
+          id: block.id,
+          name: block.name,
+          functionCode: block.functionCode,
+          startAddress: block.startAddress,
+          quantity: block.quantity,
+          sortOrder: block.sortOrder ?? index,
+        })),
       }
     : emptyValues;
 }
 
 function toPayload(values: DeviceFormValues): AcquisitionDeviceInput {
-  return values;
+  return {
+    ...values,
+    registerBlocks: values.registerBlocks.map((block, index) => ({
+      ...block,
+      functionCode: block.functionCode as 3 | 4,
+      sortOrder: index,
+    })),
+  };
 }
 
 export function AcquisitionDevicesPage() {
@@ -134,10 +176,10 @@ export function AcquisitionDevicesPage() {
     try {
       if (editing) {
         await updateAcquisitionDevice(editing.id, toPayload(values));
-        toast.success("设备已更新，重启服务后生效");
+        toast.success("设备已更新，后续采集周期生效");
       } else {
         await createAcquisitionDevice(toPayload(values));
-        toast.success("设备已创建，重启服务后生效");
+        toast.success("设备已创建，后续采集周期生效");
       }
       setFormOpen(false);
       list.reload();
@@ -210,7 +252,7 @@ export function AcquisitionDevicesPage() {
     <>
       <PageHeader
         title="设备管理"
-        description="配置馈电保护器及其 Modbus 地址、采集周期和离线判定阈值。"
+        description="配置设备地址、寄存器读取块、采集周期和离线判定阈值。"
         actions={
           <Button variant="primary" onClick={() => openForm()}>
             <Plus className="h-4 w-4" aria-hidden />
@@ -274,7 +316,7 @@ export function AcquisitionDevicesPage() {
       <FormDialog
         open={formOpen}
         title={editing ? "编辑采集设备" : "新建设备"}
-        description="寄存器地址和解析规则由馈电保护器协议适配内置。"
+        description="读取块使用零基地址；当前阶段只采集原始 16 位寄存器值。"
         loading={submitting}
         onCancel={() => setFormOpen(false)}
         onSubmit={() => void form.handleSubmit(submit)()}
@@ -284,7 +326,7 @@ export function AcquisitionDevicesPage() {
       <ConfirmDialog
         open={Boolean(confirm)}
         title="删除采集设备"
-        description={`确认删除「${confirm?.name ?? ""}」吗？保存后需要重启服务。`}
+        description={`确认删除「${confirm?.name ?? ""}」吗？`}
         danger
         loading={deleting}
         onCancel={() => setConfirm(null)}
@@ -306,7 +348,8 @@ function DeviceForm({
   channelsLoading: boolean;
   loading: boolean;
 }) {
-  const { register, formState: { errors } } = form;
+  const { register, control, formState: { errors } } = form;
+  const blocks = useFieldArray({ control, name: "registerBlocks" });
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <Field label="设备名称" required error={errors.name?.message}>
@@ -337,6 +380,60 @@ function DeviceForm({
           <option value="1">启用</option><option value="0">禁用</option>
         </Select>
       </Field>
+      <div className="md:col-span-2 rounded-admin border border-border bg-neutral-background p-space-4">
+        <div className="mb-space-3 flex items-center justify-between gap-space-3">
+          <div>
+            <div className="font-medium text-text-primary">寄存器读取块</div>
+            <div className="mt-1 text-helper text-text-tertiary">FC03 保持寄存器、FC04 输入寄存器；地址从 0 开始，值将在实时寄存器页面显示。</div>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => blocks.append({ id: undefined, name: "", functionCode: 3, startAddress: 0, quantity: 1, sortOrder: blocks.fields.length })} disabled={loading}>
+            <Plus className="h-4 w-4" aria-hidden />
+            添加读取块
+          </Button>
+        </div>
+        <div className="space-y-space-3">
+          {blocks.fields.map((field, index) => {
+            const blockErrors = errors.registerBlocks?.[index];
+            return (
+              <div key={field.id} className="rounded-control border border-border bg-surface p-space-3">
+                <div className="mb-space-3 flex items-center justify-between gap-space-2">
+                  <span className="text-sm font-medium text-text-secondary">读取块 {index + 1}</span>
+                  <div className="inline-flex gap-1">
+                    <Button size="icon" variant="ghost" aria-label="上移读取块" onClick={() => index > 0 && blocks.move(index, index - 1)} disabled={loading || index === 0}>
+                      <ArrowUp className="h-4 w-4" aria-hidden />
+                    </Button>
+                    <Button size="icon" variant="ghost" aria-label="下移读取块" onClick={() => index < blocks.fields.length - 1 && blocks.move(index, index + 1)} disabled={loading || index === blocks.fields.length - 1}>
+                      <ArrowDown className="h-4 w-4" aria-hidden />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="text-error hover:text-error" onClick={() => blocks.remove(index)} disabled={loading || blocks.fields.length <= 1}>
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                      删除
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="读取块名称" required error={blockErrors?.name?.message}>
+                    <Input {...register(`registerBlocks.${index}.name`)} placeholder="例如：测量值" disabled={loading} />
+                  </Field>
+                  <Field label="功能码" required error={blockErrors?.functionCode?.message}>
+                    <Select {...register(`registerBlocks.${index}.functionCode`, { valueAsNumber: true })} disabled={loading}>
+                      <option value="3">FC03 · 保持寄存器</option>
+                      <option value="4">FC04 · 输入寄存器</option>
+                    </Select>
+                  </Field>
+                  <Field label="零基起始地址" required error={blockErrors?.startAddress?.message}>
+                    <Input {...register(`registerBlocks.${index}.startAddress`, { valueAsNumber: true })} type="number" min={0} max={65535} disabled={loading} />
+                  </Field>
+                  <Field label="寄存器数量" required error={blockErrors?.quantity?.message}>
+                    <Input {...register(`registerBlocks.${index}.quantity`, { valueAsNumber: true })} type="number" min={1} max={125} disabled={loading} />
+                  </Field>
+                </div>
+              </div>
+            );
+          })}
+          {blocks.fields.length === 0 && <div className="rounded-control border border-dashed border-border p-space-4 text-sm text-text-tertiary">请添加至少一个读取块后再保存设备。</div>}
+        </div>
+      </div>
     </div>
   );
 }

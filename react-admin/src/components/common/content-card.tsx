@@ -2,7 +2,7 @@ import type { PropsWithChildren, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 type ContentCardProps = PropsWithChildren<{
-  title?: string;
+  title?: ReactNode;
   description?: string;
   extra?: ReactNode;
   className?: string;

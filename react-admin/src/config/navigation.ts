@@ -51,7 +51,7 @@ export const defaultNavItems: NavItem[] = [
         icon: RadioTower,
       },
       {
-        label: "实时数据",
+        label: "实时寄存器",
         path: "/acquisition/realtime",
         icon: Activity,
       },
@@ -224,7 +224,7 @@ export const staticRouteTitleMap: Record<string, string> = {
   "/acquisition": "设备采集",
   "/acquisition/channel": "通信通道",
   "/acquisition/device": "设备管理",
-  "/acquisition/realtime": "实时数据",
+  "/acquisition/realtime": "实时寄存器",
   "/system/user": "用户管理",
   "/system/dept": "部门管理",
   "/system/dict": "字典管理",

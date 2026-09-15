@@ -40,7 +40,9 @@ export type {
   AcquisitionDeviceInput,
   AcquisitionDevicePage,
   AcquisitionDeviceQuery,
-  FeedProtectorData,
+  AcquisitionRegisterBlock,
+  AcquisitionRegisterBlockInput,
+  AcquisitionRegisterBlockState,
 } from "./acquisition";
 export type {
   FileBatchDeleteRequest,

@@ -137,12 +137,21 @@ tasks:
     cmds:
       - npm run test:datetime
 
+  frontend:realtime-test:
+    desc: Run realtime register browser regression tests
+    dir: react-admin
+    cmds:
+      - npm run test:register-format
+      - npm run test:realtime-null-state
+      - npm run test:realtime-layout
+
   check:
     desc: Run backend and frontend checks
     deps:
       - backend:check
       - frontend:lint
       - frontend:build
+      - frontend:realtime-test
 
   build:
     desc: Build backend and frontend
