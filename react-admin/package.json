@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0",
+    "test:datetime": "node tests/datetime.mjs",
     "test:layout": "node tests/operation-column-layout.mjs",
     "test:route-loading": "node tests/route-loading.mjs"
   },

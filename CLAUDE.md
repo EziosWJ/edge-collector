@@ -47,6 +47,16 @@ project/
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## 时间处理契约
+
+跨 API 边界的时间表示为 UTC instant：后端和数据库保存 UTC，JSON 使用带时区的 RFC3339 字符串（例如 `2026-09-14T05:43:46.123Z`）。前端接收到这类值后先解析为时间 instant，再按产品规定的展示时区格式化；当前管理后台展示时区为 `Asia/Shanghai`。
+
+- 所有时间展示统一经过 `react-admin/src/lib/datetime.ts` 的格式化函数。
+- `formatDateTime` 和 `formatDateOnly` 必须通过日期解析与 `Intl.DateTimeFormat` 完成时区转换，并输出现有页面约定的格式。
+- 时间字段新增、API DTO 修改或时间格式化逻辑修改时，必须覆盖 UTC 转 `Asia/Shanghai`、跨午夜和非法输入回退场景，并运行 `task frontend:datetime-test`。
+- API 时间字段保持 RFC3339 时区信息；时间展示代码使用解析后的值，不通过 `replace`、`slice` 等字符串操作模拟时区转换。
+- 纯日期字段（仅 `YYYY-MM-DD`）按日期处理，不添加时区；它与带时区的时间 instant 是不同的数据类型。
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**

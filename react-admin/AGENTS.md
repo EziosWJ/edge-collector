@@ -9,6 +9,9 @@
 - 优先复用已有组件，不过度封装
 - 修改后执行 `npm run build` 验证
 
+## 时间字段
+- 新增或修改 API 时间字段、DTO 类型、时间展示或时间排序时，遵循根目录 `CLAUDE.md` 的“时间处理契约”，并运行 `task frontend:datetime-test`。
+
 ## UI/UX
 - 遵循 `design-system/MASTER.md` 规范
 - 保持中性、专业、高密度、弱装饰

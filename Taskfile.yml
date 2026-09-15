@@ -131,6 +131,12 @@ tasks:
     cmds:
       - npm run build
 
+  frontend:datetime-test:
+    desc: Run the frontend datetime timezone regression test
+    dir: react-admin
+    cmds:
+      - npm run test:datetime
+
   check:
     desc: Run backend and frontend checks
     deps:
