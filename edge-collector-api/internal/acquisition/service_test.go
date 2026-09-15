@@ -35,6 +35,10 @@ func TestValidateChannelInterRequestDelayRange(t *testing.T) {
 }
 
 func TestValidateRegisterBlocks(t *testing.T) {
+	if err := validateRegisterBlocks(nil); err != nil {
+		t.Fatalf("validateRegisterBlocks() error = %v, want empty configuration to be allowed", err)
+	}
+
 	base := []RegisterBlockInput{
 		{Name: "保持寄存器", FunctionCode: FunctionCodeReadHoldingRegisters, StartAddress: 0, Quantity: 2, SortOrder: 0},
 		{Name: "输入寄存器", FunctionCode: FunctionCodeReadInputRegisters, StartAddress: 0, Quantity: 1, SortOrder: 1},

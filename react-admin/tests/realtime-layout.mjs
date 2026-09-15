@@ -116,6 +116,14 @@ try {
     await error.getByText("加载失败").waitFor();
     await error.getByText("实时状态接口不可用").waitFor();
     await error.close();
+
+    const flaky = await openPage(browser, { scenario: "?scenario=flaky", viewport: { width: 1280, height: 900 } });
+    await flaky.getByRole("heading", { name: "原始寄存器", exact: true }).waitFor();
+    await flaky.waitForTimeout(1700);
+    await flaky.getByText("本次刷新失败，当前显示上次状态", { exact: true }).waitFor();
+    assert.equal(await flaky.getByTestId("summary-total").innerText(), "5");
+    await flaky.getByTestId("device-nav-1").waitFor();
+    await flaky.close();
     console.log("realtime layout passed");
   } finally {
     await browser.close();

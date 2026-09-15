@@ -405,7 +405,7 @@ function DeviceForm({
                     <Button size="icon" variant="ghost" aria-label="下移读取块" onClick={() => index < blocks.fields.length - 1 && blocks.move(index, index + 1)} disabled={loading || index === blocks.fields.length - 1}>
                       <ArrowDown className="h-4 w-4" aria-hidden />
                     </Button>
-                    <Button size="sm" variant="ghost" className="text-error hover:text-error" onClick={() => blocks.remove(index)} disabled={loading || blocks.fields.length <= 1}>
+                    <Button size="sm" variant="ghost" className="text-error hover:text-error" onClick={() => blocks.remove(index)} disabled={loading}>
                       <Trash2 className="h-4 w-4" aria-hidden />
                       删除
                     </Button>
@@ -431,7 +431,7 @@ function DeviceForm({
               </div>
             );
           })}
-          {blocks.fields.length === 0 && <div className="rounded-control border border-dashed border-border p-space-4 text-sm text-text-tertiary">请添加至少一个读取块后再保存设备。</div>}
+          {blocks.fields.length === 0 && <div className="rounded-control border border-dashed border-border p-space-4 text-sm text-text-tertiary">暂未配置读取块；保存后设备会显示为“未配置读取块”，添加读取块后才会开始采集。</div>}
         </div>
       </div>
     </div>

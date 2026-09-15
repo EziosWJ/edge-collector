@@ -185,9 +185,6 @@ func validateDevice(input DeviceInput) error {
 }
 
 func validateRegisterBlocks(blocks []RegisterBlockInput) error {
-	if len(blocks) == 0 {
-		return ErrInvalid
-	}
 	names := make(map[string]struct{}, len(blocks))
 	orders := make(map[int]struct{}, len(blocks))
 	intervals := make(map[int][]registerInterval)

@@ -78,7 +78,7 @@ func TestPollDeviceOnceReadsConfiguredBlocksInOrderAndKeepsGoing(t *testing.T) {
 	}
 }
 
-func TestActiveChannelConfigsExcludesDevicesWithoutRegisterBlocks(t *testing.T) {
+func TestActiveChannelConfigsIncludesDevicesWithoutRegisterBlocks(t *testing.T) {
 	configs := activeChannelConfigs(
 		[]Channel{{ID: 9, Enabled: Enabled}},
 		[]Device{
@@ -91,8 +91,8 @@ func TestActiveChannelConfigsExcludesDevicesWithoutRegisterBlocks(t *testing.T) 
 	if !ok {
 		t.Fatal("active channel config missing, want configured device")
 	}
-	if len(config.devices) != 1 || config.devices[0].ID != 2 {
-		t.Fatalf("active devices = %#v, want only device with register blocks", config.devices)
+	if len(config.devices) != 2 || config.devices[0].ID != 1 || config.devices[1].ID != 2 {
+		t.Fatalf("active devices = %#v, want enabled devices including unconfigured device", config.devices)
 	}
 }
 
@@ -170,6 +170,64 @@ func TestRuntimeRefreshRemovesDisabledDeviceState(t *testing.T) {
 	}
 }
 
+func TestRuntimeRefreshWaitsForInFlightDeviceRead(t *testing.T) {
+	store := NewCurrentStateStore()
+	readStarted := make(chan struct{}, 1)
+	readRelease := make(chan struct{})
+	session := &fakeModbusSession{
+		registers:   map[uint8][]uint16{1: {100}},
+		readStarted: readStarted,
+		readRelease: readRelease,
+	}
+	channel := Channel{ID: 9, Enabled: Enabled}
+	first := Device{ID: 1, Name: "旧设备", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, PollIntervalMS: 60000, FailureThreshold: 3, RegisterBlocks: testBlocks(31)}
+	second := Device{ID: 2, Name: "新设备", ChannelID: 9, SlaveID: 1, DeviceType: DeviceTypeFeedProtector, Enabled: Enabled, PollIntervalMS: 60000, FailureThreshold: 3, RegisterBlocks: testBlocks(32)}
+	runtime, err := NewRuntime([]Channel{channel}, []Device{first}, store, func(Channel) (ModbusSession, error) {
+		return session, nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	runner := newChannelRunner(runtime, channelConfig{active: true, channel: channel, devices: []Device{first}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		runner.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-readStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial read did not start")
+	}
+	runner.Update(channelConfig{active: true, channel: channel, devices: []Device{second}})
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := store.Get(second.ID); ok {
+		t.Fatal("configuration applied before in-flight read completed")
+	}
+
+	close(readRelease)
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, ok := store.Get(second.ID); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("configuration was not applied after in-flight read completed")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	runner.Stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("channel runner did not stop")
+	}
+}
+
 type fakeModbusSession struct {
 	mu            sync.Mutex
 	current       uint8
@@ -178,6 +236,8 @@ type fakeModbusSession struct {
 	registers     map[uint8][]uint16
 	errors        map[uint8]error
 	requestErrors map[runtimeRegisterCall]error
+	readStarted   chan<- struct{}
+	readRelease   <-chan struct{}
 }
 
 func (s *fakeModbusSession) Open() error  { return nil }
@@ -197,6 +257,10 @@ func (s *fakeModbusSession) ReadHoldingRegisters(_ context.Context, _ uint8, add
 	call := runtimeRegisterCall{slaveID: id, functionCode: FunctionCodeReadHoldingRegisters, address: address, quantity: quantity}
 	s.calls = append(s.calls, call)
 	s.mu.Unlock()
+	if s.readStarted != nil {
+		s.readStarted <- struct{}{}
+		<-s.readRelease
+	}
 	if err := s.requestErrors[call]; err != nil {
 		return nil, err
 	}

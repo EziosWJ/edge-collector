@@ -120,6 +120,7 @@ const states: AcquisitionCurrentState[] = [
 ];
 
 const nativeFetch = window.fetch.bind(window);
+let flakyCalls = 0;
 window.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   if (!url.includes("/api/v1/acquisition/states")) {
@@ -127,7 +128,7 @@ window.fetch = async (input, init) => {
   }
 
   const scenario = new URL(window.location.href).searchParams.get("scenario");
-  if (scenario === "error") {
+  if (scenario === "error" || (scenario === "flaky" && ++flakyCalls > 1)) {
     return new Response(JSON.stringify({ code: 503, message: "实时状态接口不可用" }), {
       status: 503,
       headers: { "Content-Type": "application/json" },

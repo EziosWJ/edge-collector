@@ -369,7 +369,7 @@ func (r *channelRunner) Run(ctx context.Context) {
 		if interval <= 0 {
 			interval = time.Second
 		}
-		// The next period starts after the complete two-request device read.
+		// The next period starts after the complete device read cycle.
 		nextDue[device.ID] = time.Now().Add(interval)
 	}
 }
@@ -467,7 +467,7 @@ func activeChannelConfigs(channels []Channel, devices []Device) map[int64]channe
 func devicesForChannel(devices []Device, channelID int64) []Device {
 	result := make([]Device, 0)
 	for _, device := range devices {
-		if device.ChannelID == channelID && device.Enabled == Enabled && len(device.RegisterBlocks) > 0 {
+		if device.ChannelID == channelID && device.Enabled == Enabled {
 			result = append(result, device)
 		}
 	}

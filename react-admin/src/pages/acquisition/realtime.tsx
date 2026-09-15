@@ -69,7 +69,6 @@ export function AcquisitionRealtimePage() {
         return result[0]?.deviceId ?? null;
       });
     } catch (loadError) {
-      setStates([]);
       setError(getErrorMessage(loadError, "无法获取实时寄存器状态"));
       toast.error({
         title: "实时寄存器加载失败",
