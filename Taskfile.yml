@@ -152,6 +152,18 @@ tasks:
     cmds:
       - npm run test:acquisition-e2e
 
+  e2e:acquisition-script:
+    desc: Run the SQLite, Go API, simulator and browser acquisition script E2E
+    dir: react-admin
+    cmds:
+      - npm run test:acquisition-script-e2e
+
+  e2e:znck-i:
+    desc: Run the ZNCK-I RTU and TCP dynamic transaction E2E
+    dir: react-admin
+    cmds:
+      - npm run test:znck-i-runtime-e2e
+
   check:
     desc: Run backend and frontend checks
     deps:

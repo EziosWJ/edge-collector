@@ -141,7 +141,7 @@ React 管理后台采用“设备列表 + 当前数据详情”的基本形态�
 
 以下能力属于完整产品需求，但不进入第一阶段交付范围：
 
-- TCP / UDP 设备接入；
+- TCP / UDP 设备接入（已由 ADR-0015 建立；本阶段说明不覆盖其后续生产化压力验证）；
 - 高开保护器协议适配；
 - MQTT Client 接入；
 - 实时数据 MQTT 上报；
@@ -231,8 +231,10 @@ React 管理后台采用“设备列表 + 当前数据详情”的基本形态�
 
 ## 当前实施状态
 
-当前正式进入 **第一阶段：馈电保护器 RS485 原始寄存器采集 + 内存当前状态 + 页面可视化**。
+第一阶段的馈电保护器 RS485 原始寄存器采集、内存当前状态和页面可视化已完成；ADR-0015 进一步完成了 `MODBUS_RTU`、`MODBUS_TCP`、`MODBUS_UDP` 与 `MODBUS_RTU_OVER_UDP` 的统一 raw 采集底座。
 
-现阶段的技术设计和 Issue 拆分均应围绕这一阶段展开。MQTT、告警、控制、Modbus Server、TCP / UDP 和 RK3568 部署细节暂不阻塞第一阶段开发。
+当前已确认交付的采集能力还包括 ADR-0016 用户可配置 Starlark 动态事务：脚本 draft、Validate、不可变 Publish/Rollback、设备绑定、`after_poll(ctx)`、受控 FC03/FC16/FC05、delay、state/event overlay 以及独立运行观察。固定 `registerBlocks` 仍负责基础采集，脚本不接管 transport、session 或 channel 调度。
 
-第一阶段关键决策见 `docs/adr/0011-phase-one-rs485-modbus-rtu-acquisition.md`、`docs/adr/0013-rs485-request-pacing-and-runtime-reconfiguration.md` 和 `docs/adr/0014-raw-register-acquisition-before-protocol-parsing.md`。
+后续阶段仍负责业务告警模型与历史、MQTT 上报和远程控制、控制专用 UI、Modbus Server、工程量解析以及生产化压力和 RK3568 部署完善。动态事件不等同于业务告警，脚本的 FC05/FC16 能力也不等同于远程控制业务。
+
+第一阶段关键决策见 `docs/adr/0011-phase-one-rs485-modbus-rtu-acquisition.md`、`docs/adr/0013-rs485-request-pacing-and-runtime-reconfiguration.md` 和 `docs/adr/0014-raw-register-acquisition-before-protocol-parsing.md`；四传输底座见 `docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md`，动态事务见 `docs/adr/0016-user-configurable-starlark-modbus-dynamic-transactions.md`。

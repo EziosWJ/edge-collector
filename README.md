@@ -16,9 +16,11 @@
 - 作为 Modbus Server 向其他设备或系统提供指定数据；
 - 不同设备的寄存器布局、告警查询流程和控制逻辑允许独立适配。
 
-> 以上为项目需求边界，不代表相关采集能力已经全部实现。当前阶段首先完成项目基础设施与需求设计，再逐步落地设备接入能力。
+> 采集底座和 ADR-0016 Starlark 动态事务已在现有四种 Modbus transport 上落地；业务告警、MQTT 上报/控制、Modbus Server 与控制专用 UI 仍按后续阶段推进。
 
 正式需求基线：[`docs/requirements/edge-collector-requirements.md`](docs/requirements/edge-collector-requirements.md)
+
+动态事务决策与实现规格：[`ADR-0016`](docs/adr/0016-user-configurable-starlark-modbus-dynamic-transactions.md)、[`Implementation Spec`](docs/specs/starlark-modbus-dynamic-transactions.md)。ZNCK-I 验收夹具说明见 [`modbus-simulator/README.md`](modbus-simulator/README.md)。
 
 ## 目录结构
 
@@ -61,6 +63,7 @@ task dev:sqlite          # SQLite + API + Web
 task test                # 后端测试
 task check               # 后端检查 + 前端 lint/build
 task db:check            # PostgreSQL/SQLite 兼容性检查
+task e2e:acquisition     # 采集 API/模拟器/浏览器验收
 ```
 
 ## ARM64 / RK3568
