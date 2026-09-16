@@ -5,6 +5,7 @@ import { AccountProfilePage } from "@/pages/account-profile";
 import { AcquisitionChannelsPage } from "@/pages/acquisition/channels";
 import { AcquisitionDevicesPage } from "@/pages/acquisition/devices";
 import { AcquisitionRealtimePage } from "@/pages/acquisition/realtime";
+import { AcquisitionScriptsPage } from "@/pages/acquisition/scripts";
 import { ChangePasswordPage } from "@/pages/change-password";
 import { DashboardPage } from "@/pages/dashboard";
 import { DetailDemoPage } from "@/pages/examples/detail-demo";
@@ -92,6 +93,10 @@ export const router = createBrowserRouter([
       {
         path: "acquisition/device",
         element: <AcquisitionDevicesPage />,
+      },
+      {
+        path: "acquisition/script",
+        element: <AcquisitionScriptsPage />,
       },
       {
         path: "acquisition/realtime",

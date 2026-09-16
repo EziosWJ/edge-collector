@@ -14,6 +14,8 @@
     "test:realtime-layout": "node tests/realtime-layout.mjs",
     "test:acquisition-config": "node tests/acquisition-config.mjs",
     "test:acquisition-e2e": "node tests/acquisition-e2e.mjs",
+    "test:acquisition-script-e2e": "node tests/acquisition-script-e2e.mjs",
+    "test:znck-i-runtime-e2e": "node tests/znck-i-runtime-e2e.mjs",
     "test:layout": "node tests/operation-column-layout.mjs",
     "test:route-loading": "node tests/route-loading.mjs"
   },

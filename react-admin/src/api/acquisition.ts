@@ -10,9 +10,18 @@ import type {
   AcquisitionDeviceInput,
   AcquisitionDevicePage,
   AcquisitionDeviceQuery,
+  AcquisitionScript,
+  AcquisitionScriptInput,
+  AcquisitionScriptPage,
+  AcquisitionScriptQuery,
+  AcquisitionScriptRuntimeState,
+  AcquisitionScriptValidationResult,
+  AcquisitionScriptVersion,
 } from "@/types/acquisition";
 
 const BASE_PATH = "/api/v1/acquisition";
+const SCRIPTS_PATH = `${BASE_PATH}/scripts`;
+const SCRIPT_STATES_PATH = `${BASE_PATH}/script-states`;
 
 export function getAcquisitionChannels(query: AcquisitionChannelQuery = {}) {
   return http.get<AcquisitionChannelPage>(`${BASE_PATH}/channels`, { query });
@@ -70,4 +79,48 @@ export function getAcquisitionState(id: number) {
 
 export function getAcquisitionChannelStates() {
   return http.get<AcquisitionChannelRuntimeState[]>(`${BASE_PATH}/channel-state`);
+}
+
+export function getAcquisitionScripts(query: AcquisitionScriptQuery = {}) {
+  return http.get<AcquisitionScriptPage>(SCRIPTS_PATH, { query });
+}
+
+export function getAcquisitionScript(id: number) {
+  return http.get<AcquisitionScript>(`${SCRIPTS_PATH}/${id}`);
+}
+
+export function createAcquisitionScript(data: AcquisitionScriptInput) {
+  return http.post<AcquisitionScript>(SCRIPTS_PATH, data);
+}
+
+export function updateAcquisitionScript(id: number, data: AcquisitionScriptInput) {
+  return http.put<AcquisitionScript>(`${SCRIPTS_PATH}/${id}`, data);
+}
+
+export function deleteAcquisitionScript(id: number) {
+  return http.delete<void>(`${SCRIPTS_PATH}/${id}`);
+}
+
+export function validateAcquisitionScript(id: number) {
+  return http.post<AcquisitionScriptValidationResult>(`${SCRIPTS_PATH}/${id}/validate`);
+}
+
+export function publishAcquisitionScript(id: number) {
+  return http.post<AcquisitionScriptVersion>(`${SCRIPTS_PATH}/${id}/publish`);
+}
+
+export function getAcquisitionScriptVersions(id: number) {
+  return http.get<AcquisitionScriptVersion[]>(`${SCRIPTS_PATH}/${id}/versions`);
+}
+
+export function rollbackAcquisitionScript(id: number, versionId: number) {
+  return http.post<void>(`${SCRIPTS_PATH}/${id}/rollback`, { versionId });
+}
+
+export function getAcquisitionScriptStates() {
+  return http.get<AcquisitionScriptRuntimeState[]>(SCRIPT_STATES_PATH);
+}
+
+export function getAcquisitionScriptState(deviceId: number) {
+  return http.get<AcquisitionScriptRuntimeState>(`${SCRIPT_STATES_PATH}/${deviceId}`);
 }

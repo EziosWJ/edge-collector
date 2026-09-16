@@ -35,6 +35,7 @@ export type AcquisitionDevice = {
   id: number;
   name: string;
   deviceType: "FEED_PROTECTOR";
+  scriptId?: number | null;
   channelId: number;
   unitId: number;
   networkEndpoint?: AcquisitionNetworkEndpoint | null;
@@ -73,8 +74,11 @@ export type AcquisitionRegisterBlockInput = Omit<
 
 export type AcquisitionDeviceInput = Omit<
   AcquisitionDevice,
-  "id" | "createTime" | "updateTime" | "registerBlocks"
-> & { registerBlocks: AcquisitionRegisterBlockInput[] };
+  "id" | "createTime" | "updateTime" | "registerBlocks" | "scriptId"
+> & {
+  scriptId?: number | null;
+  registerBlocks: AcquisitionRegisterBlockInput[];
+};
 
 export type AcquisitionRegisterBlockState = {
   id: number;
@@ -147,3 +151,90 @@ export type AcquisitionCurrentState = {
 
 export type AcquisitionChannelPage = ApiPageResult<AcquisitionChannel>;
 export type AcquisitionDevicePage = ApiPageResult<AcquisitionDevice>;
+
+export type AcquisitionScriptJsonPrimitive = string | number | boolean | null;
+export type AcquisitionScriptJsonValue =
+  | AcquisitionScriptJsonPrimitive
+  | AcquisitionScriptJsonValue[]
+  | { [key: string]: AcquisitionScriptJsonValue };
+
+export type AcquisitionScriptErrorType =
+  | "SCRIPT_COMPILE"
+  | "SCRIPT_RUNTIME"
+  | "SCRIPT_LIMIT"
+  | "MODBUS_TRANSPORT"
+  | "MODBUS_EXCEPTION"
+  | "SCRIPT_OUTPUT"
+  | "CANCELED"
+  | "HOST_UNAVAILABLE";
+
+export type AcquisitionScriptVersion = {
+  id: number;
+  scriptId: number;
+  versionNo: number;
+  source: string;
+  checksum: string;
+  publishedBy: number;
+  publishedAt: string;
+};
+
+export type AcquisitionScript = {
+  id: number;
+  name: string;
+  description: string;
+  draftSource: string;
+  publishedVersionId?: number | null;
+  publishedVersion?: AcquisitionScriptVersion | null;
+  draftMatchesPublished: boolean;
+  boundDeviceCount: number;
+  createTime?: string | null;
+  updateTime?: string | null;
+};
+
+export type AcquisitionScriptInput = Pick<
+  AcquisitionScript,
+  "name" | "description" | "draftSource"
+>;
+
+export type AcquisitionScriptQuery = Partial<ApiPageRequest> & {
+  name?: string;
+};
+
+export type AcquisitionScriptPage = ApiPageResult<AcquisitionScript>;
+
+export type AcquisitionScriptValidationError = {
+  filename?: string;
+  line: number;
+  column: number;
+  message: string;
+};
+
+export type AcquisitionScriptValidationResult = {
+  valid: boolean;
+  errors: AcquisitionScriptValidationError[];
+};
+
+export type AcquisitionScriptRollbackInput = {
+  versionId: number;
+};
+
+export type AcquisitionScriptRuntimeEvent = {
+  kind: string;
+  key: string;
+  payload: AcquisitionScriptJsonValue;
+  occurredAt: string;
+};
+
+export type AcquisitionScriptRuntimeState = {
+  deviceId: number;
+  deviceName?: string;
+  scriptId: number;
+  scriptVersionId: number;
+  versionNo: number;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string | null;
+  lastErrorType?: AcquisitionScriptErrorType | null;
+  state: Record<string, AcquisitionScriptJsonValue>;
+  events: AcquisitionScriptRuntimeEvent[];
+};

@@ -8,6 +8,7 @@ import {
   deleteAcquisitionDevice,
   getAcquisitionChannels,
   getAcquisitionDevices,
+  getAcquisitionScripts,
   updateAcquisitionDevice,
 } from "@/api/acquisition";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
@@ -30,6 +31,7 @@ import type {
   AcquisitionChannel,
   AcquisitionDevice,
   AcquisitionDeviceInput,
+  AcquisitionScript,
   DataTableColumn,
 } from "@/types";
 
@@ -42,6 +44,10 @@ const deviceSchema = z.object({
   name: z.string().trim().min(1, "设备名称不能为空").max(100, "设备名称不能超过 100 个字符"),
   deviceType: z.literal("FEED_PROTECTOR"),
   channelId: z.coerce.number().int().positive("请选择通信通道"),
+  scriptId: z.preprocess(
+    (value) => (value === "" || value === undefined ? null : value),
+    z.coerce.number().int().positive("请选择已发布的协议脚本").nullable(),
+  ),
   unitId: z.coerce.number().int().min(0, "Unit ID 范围为 0～255").max(255, "Unit ID 范围为 0～255"),
   networkEndpoint: networkEndpointSchema.optional(),
   pollIntervalMs: z.coerce.number().int().positive("采集周期必须大于 0"),
@@ -89,6 +95,7 @@ const emptyValues: DeviceFormValues = {
   name: "",
   deviceType: "FEED_PROTECTOR",
   channelId: 0,
+  scriptId: null,
   unitId: 1,
   networkEndpoint: { host: "", port: 502 },
   pollIntervalMs: 1000,
@@ -103,6 +110,7 @@ function toFormValues(device?: AcquisitionDevice): DeviceFormValues {
         name: device.name,
         deviceType: device.deviceType,
         channelId: device.channelId,
+        scriptId: device.scriptId ?? null,
         unitId: device.unitId,
         networkEndpoint: device.networkEndpoint ?? emptyValues.networkEndpoint,
         pollIntervalMs: device.pollIntervalMs,
@@ -150,6 +158,8 @@ export function AcquisitionDevicesPage() {
   });
   const [channels, setChannels] = useState<AcquisitionChannel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(true);
+  const [scripts, setScripts] = useState<AcquisitionScript[]>([]);
+  const [scriptsLoading, setScriptsLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<AcquisitionDevice | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
@@ -173,8 +183,22 @@ export function AcquisitionDevicesPage() {
     }
   };
 
+  const loadScripts = async () => {
+    setScriptsLoading(true);
+    try {
+      const result = await getAcquisitionScripts({ page: 1, pageSize: 500 });
+      setScripts(result.records.filter((script) => script.publishedVersion != null));
+    } catch (error) {
+      setScripts([]);
+      toast.error({ title: "脚本加载失败", description: getErrorMessage(error, "无法选择动态协议脚本") });
+    } finally {
+      setScriptsLoading(false);
+    }
+  };
+
   useEffect(() => {
     void loadChannels();
+    void loadScripts();
   }, []);
 
   const openForm = (device?: AcquisitionDevice) => {
@@ -182,6 +206,7 @@ export function AcquisitionDevicesPage() {
     form.reset(toFormValues(device));
     setFormOpen(true);
     void loadChannels();
+    void loadScripts();
   };
 
   const submit = async (values: DeviceFormValues) => {
@@ -360,7 +385,14 @@ export function AcquisitionDevicesPage() {
         onCancel={() => setFormOpen(false)}
         onSubmit={() => void form.handleSubmit(submit)()}
       >
-        <DeviceForm form={form} channels={channels} channelsLoading={channelsLoading} loading={submitting} />
+        <DeviceForm
+          form={form}
+          channels={channels}
+          channelsLoading={channelsLoading}
+          scripts={scripts}
+          scriptsLoading={scriptsLoading}
+          loading={submitting}
+        />
       </FormDialog>
       <ConfirmDialog
         open={Boolean(confirm)}
@@ -380,11 +412,15 @@ function DeviceForm({
   form,
   channels,
   channelsLoading,
+  scripts,
+  scriptsLoading,
   loading,
 }: {
   form: ReturnType<typeof useForm<DeviceFormValues>>;
   channels: AcquisitionChannel[];
   channelsLoading: boolean;
+  scripts: AcquisitionScript[];
+  scriptsLoading: boolean;
   loading: boolean;
 }) {
   const { register, control, formState: { errors } } = form;
@@ -407,6 +443,20 @@ function DeviceForm({
         <Select {...register("channelId", { valueAsNumber: true })} disabled={loading || channelsLoading}>
           <option value="0">请选择通信通道</option>
           {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}（{channel.protocol}）</option>)}
+        </Select>
+      </Field>
+      <Field
+        label="动态协议脚本"
+        error={errors.scriptId?.message}
+        help={scriptsLoading ? "脚本加载中..." : "仅显示已有 published version 的脚本；不选择则只运行固定读取块。"}
+      >
+        <Select {...register("scriptId")} disabled={loading || scriptsLoading}>
+          <option value="">不绑定（仅固定读取块）</option>
+          {scripts.map((script) => (
+            <option key={script.id} value={script.id}>
+              {script.name}（v{script.publishedVersion?.versionNo}）
+            </option>
+          ))}
         </Select>
       </Field>
       <Field label="Modbus Unit ID" required error={errors.unitId?.message} help={unitIDRange.message}>

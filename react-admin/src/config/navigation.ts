@@ -5,6 +5,7 @@ import {
   Bell,
   Activity,
   Cable,
+  Code2,
   RadioTower,
   Network,
   PanelLeft,
@@ -49,6 +50,11 @@ export const defaultNavItems: NavItem[] = [
         label: "设备管理",
         path: "/acquisition/device",
         icon: RadioTower,
+      },
+      {
+        label: "协议脚本",
+        path: "/acquisition/script",
+        icon: Code2,
       },
       {
         label: "实时寄存器",
@@ -224,6 +230,7 @@ export const staticRouteTitleMap: Record<string, string> = {
   "/acquisition": "设备采集",
   "/acquisition/channel": "通信通道",
   "/acquisition/device": "设备管理",
+  "/acquisition/script": "协议脚本",
   "/acquisition/realtime": "实时寄存器",
   "/system/user": "用户管理",
   "/system/dept": "部门管理",
