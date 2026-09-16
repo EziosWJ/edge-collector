@@ -24,6 +24,18 @@ type HandlerService interface {
 	CreateDevice(context.Context, AuditMetadata, DeviceInput) (Device, error)
 	UpdateDevice(context.Context, AuditMetadata, int64, DeviceInput) (Device, error)
 	DeleteDevice(context.Context, AuditMetadata, int64) error
+	BindDeviceScript(context.Context, AuditMetadata, int64, *int64) error
+	PageScripts(context.Context, ScriptQuery) (Page[ScriptView], error)
+	FindScript(context.Context, int64) (*ScriptView, error)
+	CreateScript(context.Context, AuditMetadata, ScriptInput) (ScriptView, error)
+	UpdateScript(context.Context, AuditMetadata, int64, ScriptInput) (ScriptView, error)
+	DeleteScript(context.Context, AuditMetadata, int64) error
+	ValidateScript(context.Context, int64) (ScriptValidationResult, error)
+	PublishScript(context.Context, AuditMetadata, int64) (ScriptVersion, error)
+	ListScriptVersions(context.Context, int64) ([]ScriptVersion, error)
+	RollbackScript(context.Context, AuditMetadata, int64, int64) error
+	ListScriptRuntimeStates(context.Context) ([]ScriptRuntimeState, error)
+	FindScriptRuntimeState(context.Context, int64) (*ScriptRuntimeState, error)
 }
 
 type Handler struct {
@@ -51,11 +63,26 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	devices.GET("/:id", handler.deviceDetail)
 	devices.POST("", handler.createDevice)
 	devices.PUT("/:id", handler.updateDevice)
+	devices.PUT("/:id/script", handler.bindDeviceScript)
+	devices.DELETE("/:id/script", handler.unbindDeviceScript)
 	devices.DELETE("/:id", handler.deleteDevice)
+
+	scripts := router.Group("/scripts")
+	scripts.GET("", handler.pageScripts)
+	scripts.GET("/:id", handler.scriptDetail)
+	scripts.POST("", handler.createScript)
+	scripts.PUT("/:id", handler.updateScript)
+	scripts.DELETE("/:id", handler.deleteScript)
+	scripts.POST("/:id/validate", handler.validateScript)
+	scripts.POST("/:id/publish", handler.publishScript)
+	scripts.GET("/:id/versions", handler.listScriptVersions)
+	scripts.POST("/:id/rollback", handler.rollbackScript)
 
 	router.GET("/states", handler.statesList)
 	router.GET("/states/:id", handler.stateDetail)
 	router.GET("/channel-state", handler.channelStatesList)
+	router.GET("/script-states", handler.scriptRuntimeStatesList)
+	router.GET("/script-states/:id", handler.scriptRuntimeStateDetail)
 }
 
 // ApiEnvelope documents the shared HTTP response shape for Swagger.
@@ -79,6 +106,7 @@ type deviceRequest struct {
 	DeviceType       string                  `json:"deviceType"`
 	ChannelID        int64                   `json:"channelId"`
 	UnitID           uint8                   `json:"unitId"`
+	ScriptID         *int64                  `json:"scriptId"`
 	NetworkEndpoint  *networkEndpointRequest `json:"networkEndpoint"`
 	PollIntervalMS   int                     `json:"pollIntervalMs"`
 	FailureThreshold int                     `json:"failureThreshold"`
@@ -106,6 +134,20 @@ type registerBlockRequest struct {
 	StartAddress int    `json:"startAddress"`
 	Quantity     int    `json:"quantity"`
 	SortOrder    int    `json:"sortOrder"`
+}
+
+type scriptRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	DraftSource string `json:"draftSource"`
+}
+
+type scriptRollbackRequest struct {
+	VersionID int64 `json:"versionId"`
+}
+
+type deviceScriptRequest struct {
+	ScriptID *int64 `json:"scriptId"`
 }
 
 func (r channelRequest) input() ChannelInput {
@@ -153,7 +195,11 @@ func (r deviceRequest) input() DeviceInput {
 	if r.NetworkEndpoint != nil {
 		endpoint = &NetworkEndpoint{Host: r.NetworkEndpoint.Host, Port: r.NetworkEndpoint.Port}
 	}
-	return DeviceInput{Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, UnitID: r.UnitID, NetworkEndpoint: endpoint, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled, RegisterBlocks: blocks}
+	return DeviceInput{Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, UnitID: r.UnitID, ScriptID: r.ScriptID, NetworkEndpoint: endpoint, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled, RegisterBlocks: blocks}
+}
+
+func (r scriptRequest) input() ScriptInput {
+	return ScriptInput{Name: r.Name, Description: r.Description, DraftSource: r.DraftSource}
 }
 
 // pageChannels godoc
@@ -332,6 +378,225 @@ func (h *Handler) deleteDevice(c *gin.Context) {
 	h.write(c, nil, h.service.DeleteDevice(c, metadata(c), id))
 }
 
+// bindDeviceScript godoc
+// @Summary 绑定设备协议脚本
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "设备 ID"
+// @Param request body deviceScriptRequest true "脚本绑定；scriptId 必须指向已发布脚本"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/devices/{id}/script [put]
+func (h *Handler) bindDeviceScript(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var request deviceScriptRequest
+	if c.ShouldBindJSON(&request) != nil {
+		badRequest(c)
+		return
+	}
+	h.write(c, nil, h.service.BindDeviceScript(c, metadata(c), id, request.ScriptID))
+}
+
+// unbindDeviceScript godoc
+// @Summary 解绑设备协议脚本
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "设备 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/devices/{id}/script [delete]
+func (h *Handler) unbindDeviceScript(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	h.write(c, nil, h.service.BindDeviceScript(c, metadata(c), id, nil))
+}
+
+// pageScripts godoc
+// @Summary 协议脚本分页
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param page query int false "页码"
+// @Param pageSize query int false "每页条数"
+// @Param name query string false "脚本名称"
+// @Success 200 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts [get]
+func (h *Handler) pageScripts(c *gin.Context) {
+	value, err := h.service.PageScripts(c, ScriptQuery{
+		Name: c.Query("name"), Page: queryInt(c, "page", 1), PageSize: queryInt(c, "pageSize", 20),
+	})
+	h.write(c, value, err)
+}
+
+// scriptDetail godoc
+// @Summary 协议脚本详情
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "脚本 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts/{id} [get]
+func (h *Handler) scriptDetail(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	value, err := h.service.FindScript(c, id)
+	h.write(c, value, err)
+}
+
+// createScript godoc
+// @Summary 新建协议脚本草稿
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param request body scriptRequest true "协议脚本草稿"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts [post]
+func (h *Handler) createScript(c *gin.Context) {
+	var request scriptRequest
+	if c.ShouldBindJSON(&request) != nil {
+		badRequest(c)
+		return
+	}
+	value, err := h.service.CreateScript(c, metadata(c), request.input())
+	h.write(c, value, err)
+}
+
+// updateScript godoc
+// @Summary 修改协议脚本草稿
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "脚本 ID"
+// @Param request body scriptRequest true "协议脚本草稿"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts/{id} [put]
+func (h *Handler) updateScript(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var request scriptRequest
+	if c.ShouldBindJSON(&request) != nil {
+		badRequest(c)
+		return
+	}
+	value, err := h.service.UpdateScript(c, metadata(c), id, request.input())
+	h.write(c, value, err)
+}
+
+// deleteScript godoc
+// @Summary 删除协议脚本
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "脚本 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts/{id} [delete]
+func (h *Handler) deleteScript(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	h.write(c, nil, h.service.DeleteScript(c, metadata(c), id))
+}
+
+// validateScript godoc
+// @Summary 校验协议脚本草稿
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "脚本 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts/{id}/validate [post]
+func (h *Handler) validateScript(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	value, err := h.service.ValidateScript(c, id)
+	h.write(c, value, err)
+}
+
+// publishScript godoc
+// @Summary 发布协议脚本
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "脚本 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts/{id}/publish [post]
+func (h *Handler) publishScript(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	value, err := h.service.PublishScript(c, metadata(c), id)
+	h.write(c, value, err)
+}
+
+// listScriptVersions godoc
+// @Summary 协议脚本版本历史
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "脚本 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts/{id}/versions [get]
+func (h *Handler) listScriptVersions(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	value, err := h.service.ListScriptVersions(c, id)
+	h.write(c, value, err)
+}
+
+// rollbackScript godoc
+// @Summary 回滚协议脚本版本
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "脚本 ID"
+// @Param request body scriptRollbackRequest true "历史版本 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/scripts/{id}/rollback [post]
+func (h *Handler) rollbackScript(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var request scriptRollbackRequest
+	if c.ShouldBindJSON(&request) != nil {
+		badRequest(c)
+		return
+	}
+	h.write(c, nil, h.service.RollbackScript(c, metadata(c), id, request.VersionID))
+}
+
 // statesList godoc
 // @Summary 设备当前状态列表
 // @Tags 设备采集
@@ -381,11 +646,50 @@ func (h *Handler) channelStatesList(c *gin.Context) {
 	platform.OK(c, h.states.ChannelStates())
 }
 
+// scriptRuntimeStatesList godoc
+// @Summary 动态脚本运行观察列表
+// @Tags 设备采集
+// @Security BearerAuth
+// @Success 200 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/script-states [get]
+func (h *Handler) scriptRuntimeStatesList(c *gin.Context) {
+	value, err := h.service.ListScriptRuntimeStates(c)
+	h.write(c, value, err)
+}
+
+// scriptRuntimeStateDetail godoc
+// @Summary 动态脚本运行观察详情
+// @Tags 设备采集
+// @Security BearerAuth
+// @Param id path int true "设备 ID"
+// @Success 200 {object} ApiEnvelope
+// @Failure 400 {object} ApiEnvelope
+// @Failure 404 {object} ApiEnvelope
+// @Failure 401 {object} ApiEnvelope
+// @Router /api/v1/acquisition/script-states/{id} [get]
+func (h *Handler) scriptRuntimeStateDetail(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	value, err := h.service.FindScriptRuntimeState(c, id)
+	h.write(c, value, err)
+}
+
 func (h *Handler) write(c *gin.Context, value any, err error) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			platform.WriteError(c, http.StatusNotFound, platform.CodeNotFound, err.Error(), nil)
+		case errors.Is(err, ErrScriptValidatorUnavailable):
+			platform.TemporaryUnavailable(c)
+		case isScriptValidationFailure(err):
+			var validationErr *ScriptValidationFailedError
+			if errors.As(err, &validationErr) {
+				platform.WriteError(c, http.StatusBadRequest, platform.CodeBadRequest, validationErr.Error(), validationErr.Result)
+				return
+			}
 		case errors.Is(err, ErrInvalid), errors.Is(err, ErrConflict), errors.Is(err, ErrChannelHasDevices), errors.Is(err, ErrUnsupportedDevice), errors.Is(err, ErrProtocolImmutable), errors.Is(err, ErrCrossProtocolMove):
 			platform.WriteError(c, http.StatusBadRequest, platform.CodeBadRequest, err.Error(), nil)
 		case platform.IsTemporaryUnavailable(err):
@@ -396,6 +700,11 @@ func (h *Handler) write(c *gin.Context, value any, err error) {
 		return
 	}
 	platform.OK(c, value)
+}
+
+func isScriptValidationFailure(err error) bool {
+	var validationErr *ScriptValidationFailedError
+	return errors.As(err, &validationErr)
 }
 
 func metadata(c *gin.Context) AuditMetadata {

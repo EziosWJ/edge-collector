@@ -43,7 +43,14 @@ definitions:
         items:
           $ref: '#/definitions/acquisition.registerBlockRequest'
         type: array
+      scriptId:
+        type: integer
       unitId:
+        type: integer
+    type: object
+  acquisition.deviceScriptRequest:
+    properties:
+      scriptId:
         type: integer
     type: object
   acquisition.networkEndpointRequest:
@@ -66,6 +73,20 @@ definitions:
       sortOrder:
         type: integer
       startAddress:
+        type: integer
+    type: object
+  acquisition.scriptRequest:
+    properties:
+      description:
+        type: string
+      draftSource:
+        type: string
+      name:
+        type: string
+    type: object
+  acquisition.scriptRollbackRequest:
+    properties:
+      versionId:
         type: integer
     type: object
   acquisition.serialConfigRequest:
@@ -3037,6 +3058,384 @@ paths:
       security:
       - BearerAuth: []
       summary: 修改采集设备
+      tags:
+      - 设备采集
+  /api/v1/acquisition/devices/{id}/script:
+    delete:
+      parameters:
+      - description: 设备 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 解绑设备协议脚本
+      tags:
+      - 设备采集
+    put:
+      parameters:
+      - description: 设备 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 脚本绑定；scriptId 必须指向已发布脚本
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/acquisition.deviceScriptRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 绑定设备协议脚本
+      tags:
+      - 设备采集
+  /api/v1/acquisition/script-states:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 动态脚本运行观察列表
+      tags:
+      - 设备采集
+  /api/v1/acquisition/script-states/{id}:
+    get:
+      parameters:
+      - description: 设备 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 动态脚本运行观察详情
+      tags:
+      - 设备采集
+  /api/v1/acquisition/scripts:
+    get:
+      parameters:
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页条数
+        in: query
+        name: pageSize
+        type: integer
+      - description: 脚本名称
+        in: query
+        name: name
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 协议脚本分页
+      tags:
+      - 设备采集
+    post:
+      parameters:
+      - description: 协议脚本草稿
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/acquisition.scriptRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 新建协议脚本草稿
+      tags:
+      - 设备采集
+  /api/v1/acquisition/scripts/{id}:
+    delete:
+      parameters:
+      - description: 脚本 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 删除协议脚本
+      tags:
+      - 设备采集
+    get:
+      parameters:
+      - description: 脚本 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 协议脚本详情
+      tags:
+      - 设备采集
+    put:
+      parameters:
+      - description: 脚本 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 协议脚本草稿
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/acquisition.scriptRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 修改协议脚本草稿
+      tags:
+      - 设备采集
+  /api/v1/acquisition/scripts/{id}/publish:
+    post:
+      parameters:
+      - description: 脚本 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 发布协议脚本
+      tags:
+      - 设备采集
+  /api/v1/acquisition/scripts/{id}/rollback:
+    post:
+      parameters:
+      - description: 脚本 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 历史版本 ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/acquisition.scriptRollbackRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 回滚协议脚本版本
+      tags:
+      - 设备采集
+  /api/v1/acquisition/scripts/{id}/validate:
+    post:
+      parameters:
+      - description: 脚本 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 校验协议脚本草稿
+      tags:
+      - 设备采集
+  /api/v1/acquisition/scripts/{id}/versions:
+    get:
+      parameters:
+      - description: 脚本 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 协议脚本版本历史
       tags:
       - 设备采集
   /api/v1/acquisition/states:

@@ -311,6 +311,52 @@ func (f *transportStoreFake) UpdateDevice(context.Context, Device, audit.Event) 
 
 func (f *transportStoreFake) DeleteDevice(context.Context, int64, audit.Event) error { return nil }
 
+func (f *transportStoreFake) BindDeviceScript(context.Context, int64, *int64, audit.Event) error {
+	return nil
+}
+
+func (f *transportStoreFake) PageScripts(context.Context, ScriptQuery) (Page[Script], error) {
+	return Page[Script]{}, nil
+}
+
+func (f *transportStoreFake) FindScript(context.Context, int64) (*Script, error) {
+	return nil, ErrNotFound
+}
+
+func (f *transportStoreFake) ScriptNameExists(context.Context, string, int64) (bool, error) {
+	return false, nil
+}
+
+func (f *transportStoreFake) CountDevicesByScript(context.Context, int64) (int64, error) {
+	return 0, nil
+}
+
+func (f *transportStoreFake) CreateScript(context.Context, Script, audit.Event) (Script, error) {
+	return Script{}, nil
+}
+
+func (f *transportStoreFake) UpdateScript(context.Context, Script, audit.Event) (Script, error) {
+	return Script{}, nil
+}
+
+func (f *transportStoreFake) DeleteScript(context.Context, int64, audit.Event) error { return nil }
+
+func (f *transportStoreFake) FindScriptVersion(context.Context, int64, int64) (*ScriptVersion, error) {
+	return nil, ErrNotFound
+}
+
+func (f *transportStoreFake) ListScriptVersions(context.Context, int64) ([]ScriptVersion, error) {
+	return []ScriptVersion{}, nil
+}
+
+func (f *transportStoreFake) PublishScript(context.Context, int64, func(string) error, audit.Event) (ScriptVersion, error) {
+	return ScriptVersion{}, nil
+}
+
+func (f *transportStoreFake) RollbackScript(context.Context, int64, int64, audit.Event) error {
+	return nil
+}
+
 func (f *transportStoreFake) EnabledConfiguration(context.Context) ([]Channel, []Device, error) {
 	return nil, nil, nil
 }

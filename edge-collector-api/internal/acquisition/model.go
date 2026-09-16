@@ -55,6 +55,7 @@ type SerialChannel struct {
 func (SerialChannel) TableName() string { return "acquisition_serial_channel" }
 
 type Device struct {
+	ScriptID         *int64           `gorm:"column:script_id" json:"scriptId,omitempty"`
 	ID               int64            `gorm:"column:id;primaryKey" json:"id"`
 	Name             string           `gorm:"column:name" json:"name"`
 	DeviceType       string           `gorm:"column:device_type" json:"deviceType"`
@@ -96,6 +97,7 @@ type DeviceInput struct {
 	DeviceType       string
 	ChannelID        int64
 	UnitID           uint8
+	ScriptID         *int64
 	NetworkEndpoint  *NetworkEndpoint
 	PollIntervalMS   int
 	FailureThreshold int
@@ -148,4 +150,93 @@ type Page[T any] struct {
 	Total    int64 `json:"total"`
 	Page     int   `json:"page"`
 	PageSize int   `json:"pageSize"`
+}
+
+// Script is the editable identity; only PublishedVersionID selects runtime source.
+type Script struct {
+	ID                 int64     `gorm:"column:id;primaryKey" json:"id"`
+	Name               string    `gorm:"column:name" json:"name"`
+	Description        string    `gorm:"column:description" json:"description"`
+	DraftSource        string    `gorm:"column:draft_source" json:"draftSource"`
+	PublishedVersionID *int64    `gorm:"column:published_version_id" json:"publishedVersionId"`
+	CreateBy           *int64    `gorm:"column:create_by" json:"createBy"`
+	UpdateBy           *int64    `gorm:"column:update_by" json:"updateBy"`
+	CreateTime         time.Time `gorm:"column:create_time;autoCreateTime" json:"createTime"`
+	UpdateTime         time.Time `gorm:"column:update_time;autoUpdateTime" json:"updateTime"`
+	Deleted            int       `gorm:"column:deleted" json:"-"`
+}
+
+func (Script) TableName() string { return "acquisition_script" }
+
+type ScriptVersion struct {
+	ID          int64     `gorm:"column:id;primaryKey" json:"id"`
+	ScriptID    int64     `gorm:"column:script_id" json:"scriptId"`
+	VersionNo   int       `gorm:"column:version_no" json:"versionNo"`
+	Source      string    `gorm:"column:source" json:"source"`
+	Checksum    string    `gorm:"column:checksum" json:"checksum"`
+	PublishedBy int64     `gorm:"column:published_by" json:"publishedBy"`
+	PublishedAt time.Time `gorm:"column:published_at" json:"publishedAt"`
+}
+
+func (ScriptVersion) TableName() string { return "acquisition_script_version" }
+
+type ScriptQuery struct {
+	Name     string
+	Page     int
+	PageSize int
+}
+
+type ScriptInput struct {
+	Name        string
+	Description string
+	DraftSource string
+}
+
+// ScriptView is the management projection of a script identity. Published
+// source is exposed only through the immutable version snapshot selected by
+// PublishedVersionID.
+type ScriptView struct {
+	ID                    int64          `json:"id"`
+	Name                  string         `json:"name"`
+	Description           string         `json:"description"`
+	DraftSource           string         `json:"draftSource"`
+	PublishedVersionID    *int64         `json:"publishedVersionId"`
+	PublishedVersion      *ScriptVersion `json:"publishedVersion,omitempty"`
+	DraftMatchesPublished bool           `json:"draftMatchesPublished"`
+	BoundDeviceCount      int64          `json:"boundDeviceCount"`
+	CreateTime            time.Time      `json:"createTime"`
+	UpdateTime            time.Time      `json:"updateTime"`
+}
+
+type ScriptValidationError struct {
+	Filename string `json:"filename,omitempty"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
+	Message  string `json:"message"`
+}
+
+type ScriptValidationResult struct {
+	Valid  bool                    `json:"valid"`
+	Errors []ScriptValidationError `json:"errors"`
+}
+
+type ScriptRuntimeEvent struct {
+	Kind       string    `json:"kind"`
+	Key        string    `json:"key"`
+	Payload    any       `json:"payload"`
+	OccurredAt time.Time `json:"occurredAt"`
+}
+
+type ScriptRuntimeState struct {
+	DeviceID        int64                `json:"deviceId"`
+	DeviceName      string               `json:"deviceName,omitempty"`
+	ScriptID        int64                `json:"scriptId"`
+	ScriptVersionID int64                `json:"scriptVersionId"`
+	VersionNo       int                  `json:"versionNo"`
+	LastAttemptAt   *time.Time           `json:"lastAttemptAt"`
+	LastSuccessAt   *time.Time           `json:"lastSuccessAt"`
+	LastError       *string              `json:"lastError"`
+	LastErrorType   *string              `json:"lastErrorType"`
+	State           map[string]any       `json:"state"`
+	Events          []ScriptRuntimeEvent `json:"events"`
 }

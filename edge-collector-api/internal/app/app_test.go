@@ -143,6 +143,8 @@ func TestBuildRegistersAllSystemManagementRoutes(t *testing.T) {
 		"/api/system/file/page",
 		"/api/system/login-log/page",
 		"/api/v1/acquisition/channels",
+		"/api/v1/acquisition/scripts",
+		"/api/v1/acquisition/script-states",
 	} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -498,6 +500,40 @@ func (emptyAcquisitionStore) UpdateDevice(context.Context, acquisition.Device, a
 	return acquisition.Device{}, nil
 }
 func (emptyAcquisitionStore) DeleteDevice(context.Context, int64, audit.Event) error { return nil }
+func (emptyAcquisitionStore) BindDeviceScript(context.Context, int64, *int64, audit.Event) error {
+	return nil
+}
+func (emptyAcquisitionStore) PageScripts(context.Context, acquisition.ScriptQuery) (acquisition.Page[acquisition.Script], error) {
+	return acquisition.Page[acquisition.Script]{}, nil
+}
+func (emptyAcquisitionStore) FindScript(context.Context, int64) (*acquisition.Script, error) {
+	return nil, acquisition.ErrNotFound
+}
+func (emptyAcquisitionStore) ScriptNameExists(context.Context, string, int64) (bool, error) {
+	return false, nil
+}
+func (emptyAcquisitionStore) CountDevicesByScript(context.Context, int64) (int64, error) {
+	return 0, nil
+}
+func (emptyAcquisitionStore) CreateScript(context.Context, acquisition.Script, audit.Event) (acquisition.Script, error) {
+	return acquisition.Script{}, nil
+}
+func (emptyAcquisitionStore) UpdateScript(context.Context, acquisition.Script, audit.Event) (acquisition.Script, error) {
+	return acquisition.Script{}, nil
+}
+func (emptyAcquisitionStore) DeleteScript(context.Context, int64, audit.Event) error { return nil }
+func (emptyAcquisitionStore) FindScriptVersion(context.Context, int64, int64) (*acquisition.ScriptVersion, error) {
+	return nil, acquisition.ErrNotFound
+}
+func (emptyAcquisitionStore) ListScriptVersions(context.Context, int64) ([]acquisition.ScriptVersion, error) {
+	return []acquisition.ScriptVersion{}, nil
+}
+func (emptyAcquisitionStore) PublishScript(context.Context, int64, func(string) error, audit.Event) (acquisition.ScriptVersion, error) {
+	return acquisition.ScriptVersion{}, nil
+}
+func (emptyAcquisitionStore) RollbackScript(context.Context, int64, int64, audit.Event) error {
+	return nil
+}
 func (emptyAcquisitionStore) EnabledConfiguration(context.Context) ([]acquisition.Channel, []acquisition.Device, error) {
 	return nil, nil, nil
 }
