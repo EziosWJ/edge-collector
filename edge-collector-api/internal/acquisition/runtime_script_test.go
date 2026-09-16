@@ -50,6 +50,8 @@ func TestChannelRunnerRunsAfterPollBeforeNextDeviceAndHoldsChannelDuringDelay(t 
 			return &ScriptVersion{ScriptID: scriptID, ID: device.ID + 7000, VersionNo: 1, Source: "def after_poll(ctx): pass"}, nil
 		},
 		Executor: executor,
+	}, func(context.Context) ([]Channel, []Device, error) {
+		return []Channel{channel}, devices, nil
 	})
 	if err != nil {
 		t.Fatalf("NewRuntimeWithScripts() error = %v", err)
@@ -87,6 +89,79 @@ func TestChannelRunnerRunsAfterPollBeforeNextDeviceAndHoldsChannelDuringDelay(t 
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("runtime did not stop")
+	}
+}
+
+func TestRuntimeRefreshFreezesPublishedVersionAcrossPollCycles(t *testing.T) {
+	store := NewCurrentStateStore()
+	channel := Channel{ID: 7010, Protocol: ProtocolModbusRTU, Enabled: Enabled}
+	scriptID := int64(7011)
+	device := Device{
+		ID: 7012, ChannelID: channel.ID, UnitID: 1, ScriptID: &scriptID,
+		Enabled: Enabled, PollIntervalMS: 1,
+		RegisterBlocks: []RegisterBlock{{ID: 7013, FunctionCode: FunctionCodeReadHoldingRegisters, StartAddress: 10, Quantity: 1}},
+	}
+	var mu sync.Mutex
+	versionCalls := 0
+	version := ScriptVersion{ID: 7014, ScriptID: scriptID, VersionNo: 1, Source: "def after_poll(ctx): pass"}
+	provider := func(context.Context, Device) (*ScriptVersion, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		versionCalls++
+		if versionCalls > 1 {
+			return nil, errors.New("published version was queried again")
+		}
+		return &version, nil
+	}
+	seen := make(chan int64, 3)
+	executor := scriptExecutorFunc(func(_ context.Context, version script.ScriptVersion, _ script.Invocation, _ script.Host) (script.Result, error) {
+		seen <- version.VersionID
+		return script.Result{}, nil
+	})
+	runtime, err := NewRuntimeWithScripts(
+		[]Channel{channel}, []Device{device}, store,
+		func(Channel, Device) (ModbusSession, error) {
+			return &scriptRuntimeSessionFake{registers: map[uint8][]uint16{1: {1}}}, nil
+		}, nil,
+		RuntimeScriptConfig{VersionProvider: provider, Executor: executor},
+		func(context.Context) ([]Channel, []Device, error) {
+			return []Channel{channel}, []Device{device}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewRuntimeWithScripts() error = %v", err)
+	}
+	if err := runtime.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("runtime did not stop")
+		}
+	}()
+
+	for index := 0; index < 3; index++ {
+		select {
+		case got := <-seen:
+			if got != version.ID {
+				t.Fatalf("poll cycle %d used version %d, want %d", index, got, version.ID)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("poll cycle %d did not execute the frozen published version", index)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if versionCalls != 1 {
+		t.Fatalf("published version provider calls = %d, want 1 per refresh", versionCalls)
 	}
 }
 
@@ -193,8 +268,14 @@ func TestScriptExecutionRunsInParallelAcrossChannels(t *testing.T) {
 		t.Fatalf("NewRuntimeWithScripts() error = %v", err)
 	}
 	runners := []*channelRunner{
-		newChannelRunner(runtime, channelConfig{active: true, channel: channels[0], devices: []Device{devices[0]}}),
-		newChannelRunner(runtime, channelConfig{active: true, channel: channels[1], devices: []Device{devices[1]}}),
+		newChannelRunner(runtime, channelConfig{
+			active: true, channel: channels[0], devices: []Device{devices[0]},
+			scriptVersions: map[int64]ScriptVersion{devices[0].ID: {ScriptID: scriptIDs[0], ID: devices[0].ID + 100, VersionNo: 1}},
+		}),
+		newChannelRunner(runtime, channelConfig{
+			active: true, channel: channels[1], devices: []Device{devices[1]},
+			scriptVersions: map[int64]ScriptVersion{devices[1].ID: {ScriptID: scriptIDs[1], ID: devices[1].ID + 100, VersionNo: 1}},
+		}),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{}, len(runners))
@@ -431,6 +512,8 @@ func TestDynamicTransportFailureClosesNetworkSession(t *testing.T) {
 			return &ScriptVersion{ScriptID: *device.ScriptID, ID: 7043, VersionNo: 1}, nil
 		},
 		Executor: executor,
+	}, func(context.Context) ([]Channel, []Device, error) {
+		return []Channel{channel}, []Device{device}, nil
 	})
 	if err != nil {
 		t.Fatalf("NewRuntimeWithScripts() error = %v", err)
@@ -492,6 +575,8 @@ func TestScriptStateResetsWhenPublishedVersionChanges(t *testing.T) {
 			return &ScriptVersion{ScriptID: *device.ScriptID, ID: versions[index], VersionNo: index + 1}, nil
 		},
 		Executor: executor,
+	}, func(context.Context) ([]Channel, []Device, error) {
+		return []Channel{channel}, []Device{device}, nil
 	})
 	if err != nil {
 		t.Fatalf("NewRuntimeWithScripts() error = %v", err)
@@ -504,6 +589,10 @@ func TestScriptStateResetsWhenPublishedVersionChanges(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		cancel()
 		t.Fatal("version 1 script did not execute")
+	}
+	if err := runtime.Refresh(context.Background()); err != nil {
+		cancel()
+		t.Fatalf("Refresh() error = %v", err)
 	}
 	select {
 	case identity := <-resets:
@@ -558,7 +647,10 @@ func TestScriptStateResetsWhenDeviceBindingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRuntimeWithScripts() error = %v", err)
 	}
-	runner := newChannelRunner(runtime, channelConfig{active: true, channel: channel, devices: []Device{oldDevice}})
+	runner := newChannelRunner(runtime, channelConfig{
+		active: true, channel: channel, devices: []Device{oldDevice},
+		scriptVersions: map[int64]ScriptVersion{oldDevice.ID: {ScriptID: oldScriptID, ID: oldScriptID + 100, VersionNo: 1}},
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -571,7 +663,10 @@ func TestScriptStateResetsWhenDeviceBindingChanges(t *testing.T) {
 		cancel()
 		t.Fatal("initial script did not execute")
 	}
-	runner.Update(channelConfig{active: true, channel: channel, devices: []Device{newDevice}})
+	runner.Update(channelConfig{
+		active: true, channel: channel, devices: []Device{newDevice},
+		scriptVersions: map[int64]ScriptVersion{newDevice.ID: {ScriptID: newScriptID, ID: newScriptID + 100, VersionNo: 1}},
+	})
 	select {
 	case identity := <-resets:
 		if identity.ScriptID != oldScriptID || identity.ScriptVersionID != oldScriptID+100 {

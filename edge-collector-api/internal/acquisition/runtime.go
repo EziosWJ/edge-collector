@@ -20,9 +20,9 @@ type ModbusSession interface {
 }
 
 // ScriptVersionProvider resolves the published version selected for a device.
-// It is called once at the beginning of a device cycle. A nil version means
-// that the device is unbound or has no published version; drafts must never be
-// returned here.
+// Runtime.Refresh calls it while building a configuration snapshot. A nil
+// version means that the device is unbound or has no published version; drafts
+// must never be returned here.
 type ScriptVersionProvider func(context.Context, Device) (*ScriptVersion, error)
 
 // ScriptExecutor is the script package's public execution seam. A
@@ -70,21 +70,24 @@ type SessionFactory func(Channel, Device) (ModbusSession, error)
 type ConfigurationLoader func(context.Context) ([]Channel, []Device, error)
 
 type configurationSnapshot struct {
-	channels []Channel
-	devices  []Device
+	channels       []Channel
+	devices        []Device
+	scriptVersions map[int64]ScriptVersion
 }
 
 type channelConfig struct {
-	active  bool
-	channel Channel
-	devices []Device
+	active         bool
+	channel        Channel
+	devices        []Device
+	scriptVersions map[int64]ScriptVersion
 }
 
 type Runtime struct {
-	mu       sync.Mutex
-	channels []Channel
-	devices  []Device
-	loader   ConfigurationLoader
+	mu             sync.Mutex
+	channels       []Channel
+	devices        []Device
+	scriptVersions map[int64]ScriptVersion
+	loader         ConfigurationLoader
 
 	store   *CurrentStateStore
 	factory SessionFactory
@@ -94,9 +97,10 @@ type Runtime struct {
 	scriptStateMu sync.RWMutex
 	scriptStates  map[int64]ScriptRuntimeState
 
-	refreshCh chan configurationSnapshot
-	started   bool
-	retry     bool
+	refreshCh     chan configurationSnapshot
+	started       bool
+	retry         bool
+	snapshotReady bool
 }
 
 func NewRuntime(channels []Channel, devices []Device, store *CurrentStateStore, factory SessionFactory, logger *log.Logger, loaders ...ConfigurationLoader) (*Runtime, error) {
@@ -125,15 +129,16 @@ func newRuntime(channels []Channel, devices []Device, store *CurrentStateStore, 
 		loader = loaders[0]
 	}
 	return &Runtime{
-		channels:     cloneChannels(channels),
-		devices:      cloneDevices(devices),
-		loader:       loader,
-		store:        store,
-		factory:      factory,
-		logger:       logger,
-		scripts:      scripts,
-		scriptStates: make(map[int64]ScriptRuntimeState),
-		refreshCh:    make(chan configurationSnapshot, 1),
+		channels:       cloneChannels(channels),
+		devices:        cloneDevices(devices),
+		scriptVersions: make(map[int64]ScriptVersion),
+		loader:         loader,
+		store:          store,
+		factory:        factory,
+		logger:         logger,
+		scripts:        scripts,
+		scriptStates:   make(map[int64]ScriptRuntimeState),
+		refreshCh:      make(chan configurationSnapshot, 1),
 	}, nil
 }
 
@@ -152,32 +157,27 @@ func (r *Runtime) scriptConfig() RuntimeScriptConfig {
 }
 
 type capturedScriptCycle struct {
-	invocation   script.Invocation
-	version      script.ScriptVersion
-	identity     ScriptStateIdentity
-	executor     ScriptExecutor
-	enabled      bool
-	lookupFailed bool
+	invocation script.Invocation
+	version    script.ScriptVersion
+	identity   ScriptStateIdentity
+	executor   ScriptExecutor
+	enabled    bool
 }
 
-func (r *Runtime) captureScriptCycle(ctx context.Context, channel Channel, device Device) (capturedScriptCycle, error) {
+func (r *Runtime) captureScriptCycle(channel Channel, device Device, versions map[int64]ScriptVersion) (capturedScriptCycle, error) {
 	config := r.scriptConfig()
-	if config.Executor == nil || config.VersionProvider == nil || device.ScriptID == nil {
+	if config.Executor == nil || device.ScriptID == nil {
 		return capturedScriptCycle{}, nil
 	}
-	version, err := config.VersionProvider(ctx, device)
-	if err != nil {
-		return capturedScriptCycle{lookupFailed: true}, err
-	}
-	if version == nil {
+	selected, ok := versions[device.ID]
+	if !ok {
 		return capturedScriptCycle{}, nil
 	}
-	selected := *version
 	if selected.ScriptID == 0 {
 		selected.ScriptID = *device.ScriptID
 	}
 	if selected.ScriptID != *device.ScriptID {
-		return capturedScriptCycle{lookupFailed: true}, fmt.Errorf("设备 %d 的脚本版本归属不匹配", device.ID)
+		return capturedScriptCycle{}, fmt.Errorf("设备 %d 的脚本版本归属不匹配", device.ID)
 	}
 	scriptVersion := script.ScriptVersion{
 		ScriptID:  selected.ScriptID,
@@ -198,6 +198,46 @@ func (r *Runtime) captureScriptCycle(ctx context.Context, channel Channel, devic
 		executor: config.Executor,
 		enabled:  true,
 	}, nil
+}
+
+func (r *Runtime) loadScriptVersions(ctx context.Context, devices []Device) (map[int64]ScriptVersion, error) {
+	config := r.scriptConfig()
+	if config.VersionProvider == nil {
+		return nil, nil
+	}
+
+	versionsByScriptID := make(map[int64]ScriptVersion)
+	loadedScriptIDs := make(map[int64]bool)
+	hasVersion := make(map[int64]bool)
+	versionsByDeviceID := make(map[int64]ScriptVersion)
+	for _, device := range devices {
+		if device.ScriptID == nil {
+			continue
+		}
+		scriptID := *device.ScriptID
+		if !loadedScriptIDs[scriptID] {
+			loadedScriptIDs[scriptID] = true
+			version, err := config.VersionProvider(ctx, device)
+			if err != nil {
+				return nil, fmt.Errorf("加载设备 %d 的脚本发布版本失败: %w", device.ID, err)
+			}
+			if version != nil {
+				selected := *version
+				if selected.ScriptID == 0 {
+					selected.ScriptID = scriptID
+				}
+				if selected.ScriptID != scriptID {
+					return nil, fmt.Errorf("设备 %d 的脚本版本归属不匹配", device.ID)
+				}
+				versionsByScriptID[scriptID] = selected
+				hasVersion[scriptID] = true
+			}
+		}
+		if hasVersion[scriptID] {
+			versionsByDeviceID[device.ID] = versionsByScriptID[scriptID]
+		}
+	}
+	return versionsByDeviceID, nil
 }
 
 func (r *Runtime) resetScriptState(identity ScriptStateIdentity) {
@@ -546,12 +586,26 @@ func (r *Runtime) Refresh(ctx context.Context) error {
 		r.mu.Unlock()
 		return err
 	}
-	snapshot := configurationSnapshot{channels: cloneChannels(channels), devices: cloneDevices(devices)}
+	scriptVersions, err := r.loadScriptVersions(ctx, devices)
+	if err != nil {
+		r.logger.Printf("加载采集运行时脚本版本失败: %v", err)
+		r.mu.Lock()
+		r.retry = r.started
+		r.mu.Unlock()
+		return err
+	}
+	snapshot := configurationSnapshot{
+		channels:       cloneChannels(channels),
+		devices:        cloneDevices(devices),
+		scriptVersions: cloneScriptVersions(scriptVersions),
+	}
 
 	r.mu.Lock()
 	r.channels = cloneChannels(snapshot.channels)
 	r.devices = cloneDevices(snapshot.devices)
+	r.scriptVersions = cloneScriptVersions(snapshot.scriptVersions)
 	r.retry = false
+	r.snapshotReady = true
 	started := r.started
 	r.mu.Unlock()
 	if !started {
@@ -574,8 +628,21 @@ func (r *Runtime) Refresh(ctx context.Context) error {
 
 func (r *Runtime) Run(ctx context.Context) error {
 	r.mu.Lock()
+	needsRefresh := r.loader != nil && !r.snapshotReady
+	r.mu.Unlock()
+	if needsRefresh {
+		if err := r.Refresh(ctx); err != nil {
+			return err
+		}
+	}
+
+	r.mu.Lock()
 	r.started = true
-	initial := configurationSnapshot{channels: cloneChannels(r.channels), devices: cloneDevices(r.devices)}
+	initial := configurationSnapshot{
+		channels:       cloneChannels(r.channels),
+		devices:        cloneDevices(r.devices),
+		scriptVersions: cloneScriptVersions(r.scriptVersions),
+	}
 	r.mu.Unlock()
 
 	var runners sync.Map
@@ -584,7 +651,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer retryTicker.Stop()
 	apply := func(snapshot configurationSnapshot) {
 		r.store.ConfigureChannels(snapshot.channels, snapshot.devices)
-		active := activeChannelConfigs(snapshot.channels, snapshot.devices)
+		active := activeChannelConfigs(snapshot.channels, snapshot.devices, snapshot.scriptVersions)
 		activeIDs := make(map[int64]struct{}, len(active))
 		for channelID, config := range active {
 			activeIDs[channelID] = struct{}{}
@@ -891,15 +958,15 @@ func (r *channelRunner) Run(ctx context.Context) {
 			}
 		}
 
-		cycle, versionErr := r.runtime.captureScriptCycle(ctx, current.channel, device)
+		cycle, versionErr := r.runtime.captureScriptCycle(current.channel, device, current.scriptVersions)
 		if versionErr != nil {
-			r.runtime.logger.Printf("加载脚本发布版本失败 device_id=%d error=%v", device.ID, versionErr)
+			r.runtime.logger.Printf("读取脚本发布版本快照失败 device_id=%d error=%v", device.ID, versionErr)
 		} else if cycle.enabled {
 			if previous, exists := scriptIdentities[device.ID]; exists && !sameScriptStateIdentity(previous, cycle.identity) {
 				r.runtime.resetScriptState(previous)
 			}
 			scriptIdentities[device.ID] = cycle.identity
-		} else if !cycle.lookupFailed {
+		} else {
 			resetScriptStateForDevice(device.ID)
 		}
 
@@ -1043,7 +1110,11 @@ func pollDeviceCycleWithReads(ctx context.Context, device Device, session Modbus
 	return nil
 }
 
-func activeChannelConfigs(channels []Channel, devices []Device) map[int64]channelConfig {
+func activeChannelConfigs(channels []Channel, devices []Device, scriptVersionSnapshots ...map[int64]ScriptVersion) map[int64]channelConfig {
+	var scriptVersions map[int64]ScriptVersion
+	if len(scriptVersionSnapshots) > 0 {
+		scriptVersions = scriptVersionSnapshots[0]
+	}
 	result := make(map[int64]channelConfig)
 	for _, channel := range channels {
 		if channel.Enabled != Enabled {
@@ -1053,7 +1124,12 @@ func activeChannelConfigs(channels []Channel, devices []Device) map[int64]channe
 		if len(channelDevices) == 0 {
 			continue
 		}
-		result[channel.ID] = channelConfig{active: true, channel: channel, devices: channelDevices}
+		result[channel.ID] = channelConfig{
+			active:         true,
+			channel:        channel,
+			devices:        channelDevices,
+			scriptVersions: scriptVersionsForDevices(scriptVersions, channelDevices),
+		}
 	}
 	return result
 }
@@ -1141,7 +1217,32 @@ func cloneDevices(devices []Device) []Device {
 
 func cloneChannelConfig(config channelConfig) channelConfig {
 	config.devices = cloneDevices(config.devices)
+	config.scriptVersions = cloneScriptVersions(config.scriptVersions)
 	return config
+}
+
+func cloneScriptVersions(versions map[int64]ScriptVersion) map[int64]ScriptVersion {
+	if len(versions) == 0 {
+		return nil
+	}
+	result := make(map[int64]ScriptVersion, len(versions))
+	for deviceID, version := range versions {
+		result[deviceID] = version
+	}
+	return result
+}
+
+func scriptVersionsForDevices(versions map[int64]ScriptVersion, devices []Device) map[int64]ScriptVersion {
+	if len(versions) == 0 {
+		return nil
+	}
+	result := make(map[int64]ScriptVersion)
+	for _, device := range devices {
+		if version, ok := versions[device.ID]; ok {
+			result[device.ID] = version
+		}
+	}
+	return result
 }
 
 func takeLatestConfig(updates <-chan channelConfig) (channelConfig, bool) {
