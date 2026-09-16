@@ -1,0 +1,72 @@
+logging:
+  level: INFO
+  hex: false
+
+channels:
+  - name: rtu-e2e
+    protocol: rtu
+    alias: /tmp/modbus-adr0015-rtu
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    devices:
+      - devices/feeder_protector_01.yaml
+      - devices/feeder_protector_02.yaml
+
+  - name: tcp-e2e-a
+    protocol: tcp
+    host: 127.0.0.1
+    port: 2502
+    devices:
+      - devices/feeder_protector_01.yaml
+  - name: tcp-e2e-b
+    protocol: tcp
+    host: 127.0.0.1
+    port: 2503
+    devices:
+      - devices/feeder_protector_01.yaml
+  - name: tcp-e2e-c
+    protocol: tcp
+    host: 127.0.0.1
+    port: 2504
+    devices:
+      - devices/feeder_protector_01.yaml
+
+  - name: udp-e2e-a
+    protocol: udp
+    host: 127.0.0.1
+    port: 2600
+    devices:
+      - devices/feeder_protector_01.yaml
+  - name: udp-e2e-b
+    protocol: udp
+    host: 127.0.0.1
+    port: 2601
+    devices:
+      - devices/feeder_protector_01.yaml
+  - name: udp-e2e-c
+    protocol: udp
+    host: 127.0.0.1
+    port: 2602
+    devices:
+      - devices/feeder_protector_01.yaml
+
+  - name: rtu-udp-e2e-a
+    protocol: rtu_over_udp
+    host: 127.0.0.1
+    port: 2700
+    devices:
+      - devices/feeder_protector_01.yaml
+  - name: rtu-udp-e2e-b
+    protocol: rtu_over_udp
+    host: 127.0.0.1
+    port: 2701
+    devices:
+      - devices/feeder_protector_01.yaml
+  - name: rtu-udp-e2e-c
+    protocol: rtu_over_udp
+    host: 127.0.0.1
+    port: 2702
+    devices:
+      - devices/feeder_protector_01.yaml

@@ -144,6 +144,13 @@ tasks:
       - npm run test:register-format
       - npm run test:realtime-null-state
       - npm run test:realtime-layout
+      - npm run test:acquisition-config
+
+  e2e:acquisition:
+    desc: Run the SQLite, Go API, simulator and browser acquisition E2E
+    dir: react-admin
+    cmds:
+      - npm run test:acquisition-e2e
 
   check:
     desc: Run backend and frontend checks
