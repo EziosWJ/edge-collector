@@ -448,7 +448,7 @@ committed state
 
 ### 12.1 Publish / Rollback
 
-Publish / rollback commit 后触发 runtime refresh。
+Publish / rollback commit 后触发 runtime refresh。`Runtime.Refresh()` 在 configuration snapshot 中加载并固化绑定设备的 immutable published `ScriptVersion`；`channelRunner` 每个 poll cycle 不再查询数据库。
 
 当前正在执行的设备周期继续使用进入周期时捕获的 script version；新 published version 从下一安全设备边界生效。
 
@@ -478,7 +478,7 @@ Unit ID、network endpoint、同协议 channel move 等 ADR-0015 identity change
 - `0 → N (N != 0)`：查询一次；
 - `N → N`：不重复查询；
 - `N → M (M != 0, M != N)`：查询一次；
-- `N → 0`：提交 state 为 0，不查询；
+- `N → 0`：执行 `state_set("fault_code", 0)`，不查询；
 - 下一次 `0 → N`：再次查询。
 
 动态查询顺序：
@@ -506,7 +506,7 @@ FC16 write address=8120 values=[0]
 
 该 key 只是首个验收脚本的去重策略，不上升为平台统一 Alarm ID。
 
-只有动态查询和 `emit_event` 成功后才 `state_set("fault_code", code)`；如果 FC16、delay、FC03、event serialization 任一步失败，state 不提交，下一轮允许重试。
+非零故障只有动态查询和 `emit_event` 成功后才 `state_set("fault_code", code)`；如果 FC16、delay、FC03、event serialization 任一步失败，state 不提交，下一轮允许重试。恢复到 0 时显式提交 `state_set("fault_code", 0)`，使后续 `0 → N` 能再次触发。
 
 本阶段不查询历史索引 `1..25`，不解析 `8122..8128` 的单位 / 倍率，也不解析 `8160..8161` 四字节电量 word order。
 

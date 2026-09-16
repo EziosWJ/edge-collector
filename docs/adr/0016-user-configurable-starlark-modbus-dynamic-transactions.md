@@ -138,6 +138,8 @@ ADR-0014 的寄存器读取块继续是持续 raw 采集的主模型：
 - 当前 in-flight 设备周期不被中断；
 - 新版本 / 新绑定在下一安全设备边界生效。
 
+实现上，`Runtime.Refresh()` 在提交后的 configuration snapshot 中一次加载并固化每个绑定设备对应的 immutable published `ScriptVersion`；`channelRunner` 的每个 poll cycle 只使用该快照，不在周期内查询数据库。刷新失败时保留旧快照，避免未完成的配置切换覆盖当前运行配置。
+
 脚本版本编译结果可以按 version ID + checksum 缓存，但每次调用必须使用新的执行 Thread / Globals，不允许利用可变 Starlark global 在设备、周期或并发通道之间隐式共享状态。
 
 ### 8. 脚本状态是显式、受限且本阶段只保存在内存
