@@ -14,6 +14,19 @@ import (
 	"github.com/simonvetter/modbus"
 )
 
+// ModbusWriter is the optional write seam used by dynamic scripts. The
+// existing ModbusSession intentionally remains read-only so existing session
+// adapters and tests do not need to implement write operations. The session
+// has already selected the device unit ID for the current cycle; the explicit
+// slaveID keeps the adapter compatible with RegisterReader and lets a fake
+// verify the target unit.
+type ModbusWriter interface {
+	WriteRegisters(context.Context, uint8, uint16, []uint16) error
+	WriteCoil(context.Context, uint8, uint16, bool) error
+}
+
+var ErrModbusWriterUnavailable = errors.New("动态 Modbus 写入能力不可用")
+
 type modbusSession struct {
 	client *modbus.ModbusClient
 }
@@ -78,6 +91,14 @@ func (s *modbusSession) ReadHoldingRegisters(_ context.Context, _ uint8, address
 
 func (s *modbusSession) ReadInputRegisters(_ context.Context, _ uint8, address, quantity uint16) ([]uint16, error) {
 	return s.client.ReadRegisters(address, quantity, modbus.INPUT_REGISTER)
+}
+
+func (s *modbusSession) WriteRegisters(_ context.Context, _ uint8, address uint16, values []uint16) error {
+	return s.client.WriteRegisters(address, append([]uint16(nil), values...))
+}
+
+func (s *modbusSession) WriteCoil(_ context.Context, _ uint8, address uint16, on bool) error {
+	return s.client.WriteCoil(address, on)
 }
 
 func modbusParity(value string) (uint, error) {

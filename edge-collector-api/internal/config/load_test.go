@@ -43,6 +43,7 @@ log:
 	t.Setenv("APP_DATABASE__USERNAME", "environment-user")
 	t.Setenv("APP_JWT__SECRET", "test-only-secret")
 	t.Setenv("APP_AUTH__LOGIN_GUARD__IP_MAX_ATTEMPTS", "7")
+	t.Setenv("APP_ACQUISITION__SCRIPT__MAX_DELAY_MS", "750")
 
 	cfg, err := LoadFromDir(dir)
 	if err != nil {
@@ -93,6 +94,9 @@ log:
 	}
 	if cfg.JWT.TTL != 2*time.Hour {
 		t.Errorf("JWT.TTL = %s, want 2h", cfg.JWT.TTL)
+	}
+	if cfg.Acquisition.Script.MaxDelayMs != 750 || cfg.Acquisition.Script.MaxTotalDelayMs != 2000 {
+		t.Errorf("script limits = %+v, want max delay override and default total delay", cfg.Acquisition.Script)
 	}
 }
 

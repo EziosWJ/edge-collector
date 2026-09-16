@@ -22,16 +22,17 @@ const (
 // Config contains all process-level configuration. Environment-specific YAML
 // may contain deployment credentials; APP_ environment variables override YAML.
 type Config struct {
-	Environment string         `koanf:"env"`
-	Service     ServiceConfig  `koanf:"service"`
-	HTTP        HTTPConfig     `koanf:"http"`
-	Swagger     SwaggerConfig  `koanf:"swagger"`
-	CORS        CORSConfig     `koanf:"cors"`
-	Database    DatabaseConfig `koanf:"database"`
-	File        FileConfig     `koanf:"file"`
-	JWT         JWTConfig      `koanf:"jwt"`
-	Auth        AuthConfig     `koanf:"auth"`
-	Log         LogConfig      `koanf:"log"`
+	Environment string            `koanf:"env"`
+	Service     ServiceConfig     `koanf:"service"`
+	HTTP        HTTPConfig        `koanf:"http"`
+	Swagger     SwaggerConfig     `koanf:"swagger"`
+	CORS        CORSConfig        `koanf:"cors"`
+	Database    DatabaseConfig    `koanf:"database"`
+	File        FileConfig        `koanf:"file"`
+	JWT         JWTConfig         `koanf:"jwt"`
+	Auth        AuthConfig        `koanf:"auth"`
+	Log         LogConfig         `koanf:"log"`
+	Acquisition AcquisitionConfig `koanf:"acquisition"`
 }
 
 type ServiceConfig struct {
@@ -101,6 +102,27 @@ type LogConfig struct {
 	Level     string `koanf:"level"`
 	Format    string `koanf:"format"`
 	AddSource bool   `koanf:"add_source"`
+}
+
+type AcquisitionConfig struct {
+	Script ScriptLimitsConfig `koanf:"script"`
+}
+
+// ScriptLimitsConfig contains server-owned hard limits for one script source
+// or invocation. A script cannot override these values.
+type ScriptLimitsConfig struct {
+	MaxSourceBytes         int    `koanf:"max_source_bytes"`
+	MaxExecutionMs         int    `koanf:"max_execution_ms"`
+	MaxExecutionSteps      uint64 `koanf:"max_execution_steps"`
+	MaxModbusOperations    int    `koanf:"max_modbus_operations"`
+	MaxDelayMs             int    `koanf:"max_delay_ms"`
+	MaxTotalDelayMs        int    `koanf:"max_total_delay_ms"`
+	MaxStateBytesPerDevice int    `koanf:"max_state_bytes_per_device"`
+	MaxEventsPerExecution  int    `koanf:"max_events_per_execution"`
+	MaxEventsPerDevice     int    `koanf:"max_events_per_device"`
+	MaxEventPayloadBytes   int    `koanf:"max_event_payload_bytes"`
+	MaxPrintLines          int    `koanf:"max_print_lines"`
+	MaxPrintLineBytes      int    `koanf:"max_print_line_bytes"`
 }
 
 // Validate rejects invalid startup configuration before infrastructure is
@@ -261,6 +283,47 @@ func (c Config) Validate() error {
 	}
 	if !oneOf(c.Log.Format, "json", "text") {
 		errs = append(errs, errors.New("log.format must be one of json, text"))
+	}
+
+	limits := c.Acquisition.Script
+	if limits.MaxSourceBytes <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_source_bytes must be greater than zero"))
+	}
+	if limits.MaxExecutionMs <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_execution_ms must be greater than zero"))
+	}
+	if limits.MaxExecutionSteps == 0 {
+		errs = append(errs, errors.New("acquisition.script.max_execution_steps must be greater than zero"))
+	}
+	if limits.MaxModbusOperations <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_modbus_operations must be greater than zero"))
+	}
+	if limits.MaxDelayMs <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_delay_ms must be greater than zero"))
+	}
+	if limits.MaxTotalDelayMs <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_total_delay_ms must be greater than zero"))
+	}
+	if limits.MaxTotalDelayMs < limits.MaxDelayMs {
+		errs = append(errs, errors.New("acquisition.script.max_total_delay_ms must not be less than max_delay_ms"))
+	}
+	if limits.MaxStateBytesPerDevice <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_state_bytes_per_device must be greater than zero"))
+	}
+	if limits.MaxEventsPerExecution <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_events_per_execution must be greater than zero"))
+	}
+	if limits.MaxEventsPerDevice <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_events_per_device must be greater than zero"))
+	}
+	if limits.MaxEventPayloadBytes <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_event_payload_bytes must be greater than zero"))
+	}
+	if limits.MaxPrintLines <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_print_lines must be greater than zero"))
+	}
+	if limits.MaxPrintLineBytes <= 0 {
+		errs = append(errs, errors.New("acquisition.script.max_print_line_bytes must be greater than zero"))
 	}
 
 	return errors.Join(errs...)

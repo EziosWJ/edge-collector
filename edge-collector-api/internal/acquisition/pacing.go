@@ -32,17 +32,34 @@ func (p *requestPacer) run(ctx context.Context, operation func() ([]uint16, erro
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if !p.lastCompleted.IsZero() && p.delay > 0 {
-		waitFor := p.lastCompleted.Add(p.delay).Sub(p.now())
-		if waitFor > 0 {
-			if err := p.sleep(ctx, waitFor); err != nil {
-				return nil, err
-			}
-		}
+	if err := p.waitLocked(ctx); err != nil {
+		return nil, err
 	}
 	registers, err := operation()
 	p.lastCompleted = p.now()
 	return registers, err
+}
+
+func (p *requestPacer) runError(ctx context.Context, operation func() error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.waitLocked(ctx); err != nil {
+		return err
+	}
+	err := operation()
+	p.lastCompleted = p.now()
+	return err
+}
+
+func (p *requestPacer) waitLocked(ctx context.Context) error {
+	if !p.lastCompleted.IsZero() && p.delay > 0 {
+		waitFor := p.lastCompleted.Add(p.delay).Sub(p.now())
+		if waitFor > 0 {
+			return p.sleep(ctx, waitFor)
+		}
+	}
+	return nil
 }
 
 type pacedSession struct {
@@ -109,6 +126,27 @@ func (s *pacedSession) ReadInputRegisters(ctx context.Context, slaveID uint8, ad
 	})
 }
 
+func (s *pacedSession) WriteRegisters(ctx context.Context, slaveID uint8, address uint16, values []uint16) error {
+	writer, ok := s.underlying.(ModbusWriter)
+	if !ok {
+		return ErrModbusWriterUnavailable
+	}
+	copyValues := append([]uint16(nil), values...)
+	return s.write(ctx, func() error {
+		return writer.WriteRegisters(ctx, slaveID, address, copyValues)
+	})
+}
+
+func (s *pacedSession) WriteCoil(ctx context.Context, slaveID uint8, address uint16, on bool) error {
+	writer, ok := s.underlying.(ModbusWriter)
+	if !ok {
+		return ErrModbusWriterUnavailable
+	}
+	return s.write(ctx, func() error {
+		return writer.WriteCoil(ctx, slaveID, address, on)
+	})
+}
+
 func (s *pacedSession) read(ctx context.Context, operation func() ([]uint16, error)) ([]uint16, error) {
 	if s.pacer != nil {
 		s.mu.Lock()
@@ -130,6 +168,29 @@ func (s *pacedSession) read(ctx context.Context, operation func() ([]uint16, err
 	registers, err := operation()
 	s.lastCompleted = s.now()
 	return registers, err
+}
+
+func (s *pacedSession) write(ctx context.Context, operation func() error) error {
+	if s.pacer != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.pacer.runError(ctx, operation)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.lastCompleted.IsZero() && s.delay > 0 {
+		waitFor := s.lastCompleted.Add(s.delay).Sub(s.now())
+		if waitFor > 0 {
+			if err := s.sleep(ctx, waitFor); err != nil {
+				return err
+			}
+		}
+	}
+	err := operation()
+	s.lastCompleted = s.now()
+	return err
 }
 
 func normalizeDelay(delay time.Duration) time.Duration {

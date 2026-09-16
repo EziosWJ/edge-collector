@@ -14,6 +14,7 @@ import (
 
 	_ "github.com/EziosWJ/edge-collector/edge-collector-api/docs"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition"
+	acquisitionscript "github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition/script"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/app"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/auth"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/config"
@@ -110,18 +111,57 @@ func main() {
 		slog.Error("build acquisition service", "error", err)
 		os.Exit(1)
 	}
+	scriptRuntime := acquisitionscript.NewRuntime(acquisitionscript.Options{
+		Limits: acquisitionscript.Limits{
+			MaxSourceBytes:         cfg.Acquisition.Script.MaxSourceBytes,
+			MaxExecutionMs:         cfg.Acquisition.Script.MaxExecutionMs,
+			MaxExecutionSteps:      cfg.Acquisition.Script.MaxExecutionSteps,
+			MaxModbusOperations:    cfg.Acquisition.Script.MaxModbusOperations,
+			MaxDelayMs:             cfg.Acquisition.Script.MaxDelayMs,
+			MaxTotalDelayMs:        cfg.Acquisition.Script.MaxTotalDelayMs,
+			MaxStateBytesPerDevice: cfg.Acquisition.Script.MaxStateBytesPerDevice,
+			MaxEventsPerExecution:  cfg.Acquisition.Script.MaxEventsPerExecution,
+			MaxEventsPerDevice:     cfg.Acquisition.Script.MaxEventsPerDevice,
+			MaxEventPayloadBytes:   cfg.Acquisition.Script.MaxEventPayloadBytes,
+			MaxPrintLines:          cfg.Acquisition.Script.MaxPrintLines,
+			MaxPrintLineBytes:      cfg.Acquisition.Script.MaxPrintLineBytes,
+		},
+		PrintSink: acquisitionscript.PrintSinkFunc(func(ctx context.Context, entry acquisitionscript.PrintEntry) {
+			slog.Default().InfoContext(ctx, "acquisition script print",
+				"device_id", entry.DeviceID,
+				"script_id", entry.ScriptID,
+				"script_version_id", entry.ScriptVersionID,
+				"version_no", entry.VersionNo,
+				"channel_id", entry.ChannelID,
+				"message", entry.Message,
+			)
+		}),
+	})
+	acquisitionService.SetScriptValidator(acquisition.NewScriptRuntimeValidator(scriptRuntime))
 	acquisitionState := acquisition.NewCurrentStateStore()
 	channels, devices, err := acquisitionService.EnabledConfiguration(context.Background())
 	if err != nil {
 		slog.Error("load acquisition configuration", "error", err)
 		os.Exit(1)
 	}
-	acquisitionRuntime, err := acquisition.NewRuntime(channels, devices, acquisitionState, acquisition.NewModbusSessionFactory(), stdlog.New(os.Stderr, "acquisition: ", stdlog.LstdFlags), acquisitionService.EnabledConfiguration)
+	acquisitionRuntime, err := acquisition.NewRuntimeWithScripts(
+		channels,
+		devices,
+		acquisitionState,
+		acquisition.NewModbusSessionFactory(),
+		stdlog.New(os.Stderr, "acquisition: ", stdlog.LstdFlags),
+		acquisition.RuntimeScriptConfig{
+			VersionProvider: acquisitionService.PublishedScriptVersion,
+			Executor:        scriptRuntime,
+		},
+		acquisitionService.EnabledConfiguration,
+	)
 	if err != nil {
 		slog.Error("build acquisition runtime", "error", err)
 		os.Exit(1)
 	}
 	acquisitionService.SetRuntimeRefresher(acquisitionRuntime.Refresh)
+	acquisitionService.SetScriptRuntimeStateReader(acquisitionRuntime)
 
 	application, err := app.New(*cfg, database, app.Dependencies{
 		Acquisition:      acquisitionService,

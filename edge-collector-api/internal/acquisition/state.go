@@ -83,6 +83,52 @@ type configuredDevice struct {
 	active bool
 }
 
+// ScriptStateIdentity is the runtime identity used by a script state/event
+// store. It deliberately includes transport/device addressing and the
+// immutable published version, so state cannot leak across a binding,
+// endpoint, unit, channel, or version change.
+type ScriptStateIdentity struct {
+	DeviceID        int64
+	ChannelID       int64
+	UnitID          uint8
+	Protocol        string
+	ScriptID        int64
+	ScriptVersionID int64
+	NetworkEndpoint *NetworkEndpoint
+}
+
+func scriptStateIdentity(channel Channel, device Device, version ScriptVersion) ScriptStateIdentity {
+	return ScriptStateIdentity{
+		DeviceID:        device.ID,
+		ChannelID:       channel.ID,
+		UnitID:          device.UnitID,
+		Protocol:        channel.Protocol,
+		ScriptID:        version.ScriptID,
+		ScriptVersionID: version.ID,
+		NetworkEndpoint: cloneNetworkEndpoint(device.NetworkEndpoint),
+	}
+}
+
+func sameScriptStateIdentity(left, right ScriptStateIdentity) bool {
+	return left.DeviceID == right.DeviceID && left.ChannelID == right.ChannelID &&
+		left.UnitID == right.UnitID && left.Protocol == right.Protocol &&
+		left.ScriptID == right.ScriptID && left.ScriptVersionID == right.ScriptVersionID &&
+		sameNetworkEndpoint(left.NetworkEndpoint, right.NetworkEndpoint)
+}
+
+func sameScriptDeviceIdentity(left, right Device, leftChannel, rightChannel Channel) bool {
+	return sameScriptBinding(left.ScriptID, right.ScriptID) &&
+		sameDeviceSession(left, right, leftChannel, rightChannel) &&
+		samePhysicalChannel(leftChannel, rightChannel)
+}
+
+func sameScriptBinding(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
 func NewCurrentStateStore() *CurrentStateStore {
 	return &CurrentStateStore{
 		states:            make(map[int64]CurrentState),
