@@ -119,12 +119,20 @@ const states: AcquisitionCurrentState[] = [
   },
 ];
 
+const channelStates = [
+  { channelId: 10, channelName: "空闲通道", protocol: "MODBUS_RTU", status: "IDLE" },
+  { channelId: 11, channelName: "启动通道", protocol: "MODBUS_TCP", status: "STARTING" },
+  { channelId: 12, channelName: "在线通道", protocol: "MODBUS_UDP", status: "ONLINE" },
+  { channelId: 13, channelName: "降级通道", protocol: "MODBUS_RTU_OVER_UDP", status: "DEGRADED", lastError: "读取超时" },
+  { channelId: 14, channelName: "离线通道", protocol: "MODBUS_TCP", status: "OFFLINE", lastError: "设备无响应" },
+];
+
 const nativeFetch = window.fetch.bind(window);
 let flakyCalls = 0;
 window.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   if (url.includes("/api/v1/acquisition/channel-state")) {
-    return new Response(JSON.stringify({ code: 200, message: "OK", data: [] }), {
+    return new Response(JSON.stringify({ code: 200, message: "OK", data: channelStates }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

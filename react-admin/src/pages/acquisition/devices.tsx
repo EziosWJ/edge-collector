@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useListPage } from "@/hooks/use-list-page";
 import { getErrorMessage } from "@/lib/api-error";
+import { getUnitIDRange } from "@/lib/acquisition-validation";
 import type {
   AcquisitionChannel,
   AcquisitionDevice,
@@ -194,8 +195,9 @@ export function AcquisitionDevicesPage() {
       form.setError("networkEndpoint.host", { type: "validate", message: "网络设备必须配置 host" });
       return;
     }
-    if (!network && (values.unitId < 1 || values.unitId > 247)) {
-      form.setError("unitId", { type: "validate", message: "Modbus RTU Unit ID 范围为 1～247" });
+    const unitIDRange = getUnitIDRange(channel.protocol);
+    if (values.unitId < unitIDRange.min || values.unitId > unitIDRange.max) {
+      form.setError("unitId", { type: "validate", message: unitIDRange.message });
       return;
     }
     setSubmitting(true);
@@ -249,6 +251,14 @@ export function AcquisitionDevicesPage() {
     },
     { title: "通信通道", key: "channel", width: 180, render: (_, device) => channelName(device.channelId) },
     { title: "Unit ID", dataIndex: "unitId", width: 100, render: (value) => `#${value}` },
+    {
+      title: "网络端点",
+      key: "networkEndpoint",
+      width: 190,
+      render: (_, device) => device.networkEndpoint
+        ? `${device.networkEndpoint.host}:${device.networkEndpoint.port}`
+        : "串口通道",
+    },
     { title: "采集周期", dataIndex: "pollIntervalMs", width: 120, render: (value) => `${value} ms` },
     { title: "离线阈值", dataIndex: "failureThreshold", width: 110, render: (value) => `${value} 次` },
     {
@@ -381,9 +391,7 @@ function DeviceForm({
   const channelId = useWatch({ control, name: "channelId" });
   const selectedChannel = channels.find((channel) => channel.id === channelId);
   const isNetwork = selectedChannel != null && selectedChannel.protocol !== "MODBUS_RTU";
-  const unitHelp = selectedChannel?.protocol === "MODBUS_RTU"
-    ? "Modbus RTU 地址范围为 1～247。"
-    : "网络协议地址范围为 0～255。"
+  const unitIDRange = getUnitIDRange(selectedChannel?.protocol);
   const blocks = useFieldArray({ control, name: "registerBlocks" });
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -401,8 +409,8 @@ function DeviceForm({
           {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}（{channel.protocol}）</option>)}
         </Select>
       </Field>
-      <Field label="Modbus Unit ID" required error={errors.unitId?.message} help={unitHelp}>
-        <Input {...register("unitId", { valueAsNumber: true })} type="number" min={isNetwork ? 0 : 1} max={isNetwork ? 255 : 247} disabled={loading} />
+      <Field label="Modbus Unit ID" required error={errors.unitId?.message} help={unitIDRange.message}>
+        <Input {...register("unitId", { valueAsNumber: true })} type="number" min={unitIDRange.min} max={unitIDRange.max} disabled={loading} />
       </Field>
       {isNetwork && <>
         <Field label="网络主机" required error={errors.networkEndpoint?.host?.message} help="支持 IPv4、IPv6 和 hostname。">

@@ -55,6 +55,10 @@ try {
     assert.equal(await desktop.getByTestId("summary-degraded").innerText(), "1");
     assert.equal(await desktop.getByTestId("summary-unconfigured").innerText(), "1");
     assert.equal(await desktop.getByTestId("summary-offline").innerText(), "1");
+    for (const [channelID, status] of [[10, "空闲"], [11, "启动中"], [12, "在线"], [13, "部分失败"], [14, "离线"]]) {
+      const card = desktop.getByTestId(`channel-runtime-${channelID}`);
+      await card.getByText(status, { exact: true }).waitFor();
+    }
     await desktop.getByTestId("register-display-toolbar").waitFor();
     await desktop.getByRole("heading", { name: "原始寄存器", exact: true }).waitFor();
     await desktop.getByText("FC03 · 地址 0–2 · 3 个寄存器 · 3/3 有效", { exact: true }).waitFor();

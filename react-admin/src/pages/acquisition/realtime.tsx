@@ -197,7 +197,7 @@ function ChannelStatusOverview({ states }: { states: AcquisitionChannelRuntimeSt
         {states.map((state) => {
           const status = acquisitionChannelRuntimeStatusMeta[state.status];
           return (
-            <div key={state.channelId} className="rounded-control border border-border bg-neutral-background px-space-3 py-space-3">
+            <div data-testid={`channel-runtime-${state.channelId}`} key={state.channelId} className="rounded-control border border-border bg-neutral-background px-space-3 py-space-3">
               <div className="flex items-center justify-between gap-space-2">
                 <span className="truncate font-medium text-text-primary">{state.channelName || `通道 ${state.channelId}`}</span>
                 <StatusTag tone={status.tone}>{status.label}</StatusTag>
