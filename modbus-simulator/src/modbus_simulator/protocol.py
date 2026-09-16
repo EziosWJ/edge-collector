@@ -3,7 +3,7 @@ from pymodbus.constants import ExcCodes
 from pymodbus.exceptions import NoSuchIdException
 from pymodbus.framer import FramerRTU, FramerSocket
 from pymodbus.pdu import ExceptionResponse
-from .decoder import RequestDecoder
+from .decoder import RejectedRequest, RequestDecoder
 
 
 class Protocol:
@@ -39,10 +39,18 @@ class Protocol:
         try:
             response = await request.datastore_update(self.store, slave)
         except NoSuchIdException:
+            self.store.record_exception(slave, function, address, count,
+                                        ExcCodes.GATEWAY_NO_RESPONSE)
             response = ExceptionResponse(function, ExcCodes.GATEWAY_NO_RESPONSE)
         except Exception:
             self.log.logger.exception('请求处理失败，保留服务运行')
+            self.store.record_exception(slave, function, address, count,
+                                        ExcCodes.DEVICE_FAILURE)
             response = ExceptionResponse(function, ExcCodes.DEVICE_FAILURE)
+        if isinstance(request, RejectedRequest):
+            self.store.record_request(slave, function, address, count)
+            self.store.record_exception(slave, function, address, count,
+                                        response.exception_code)
         self.log.result(slave, function, address, count,
                         f'EXCEPTION:{response.exception_code}' if response.isError() else 'OK')
         frame = self.framer.encode(bytes([response.function_code]) + response.encode(), slave, tid)

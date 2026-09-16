@@ -1,0 +1,25 @@
+logging:
+  level: INFO
+  hex: false
+
+channels:
+  - name: znck-i-rtu-e2e
+    protocol: rtu
+    alias: /tmp/modbus-adr0016-znck-rtu
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    fixture_options:
+      initial_fault_code: 7
+    devices:
+      - devices/znck_i.yaml
+
+  - name: znck-i-tcp-e2e
+    protocol: tcp
+    host: 127.0.0.1
+    port: 1516
+    fixture_options:
+      initial_fault_code: 7
+    devices:
+      - devices/znck_i.yaml

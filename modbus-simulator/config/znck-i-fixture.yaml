@@ -1,0 +1,10 @@
+logging:
+  level: INFO
+  hex: true
+channels:
+  - name: znck-i-tcp
+    protocol: tcp
+    host: 127.0.0.1
+    port: 1516
+    devices:
+      - devices/znck_i.yaml

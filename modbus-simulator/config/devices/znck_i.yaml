@@ -1,0 +1,100 @@
+# ZNCK-I raw dynamic-transaction fixture; values do not claim vendor semantics.
+name: ZNCK-I fixture
+fixture: znck_i
+slave_id: 1
+registers:
+  - name: query_index
+    area: holding_register
+    address: 8120
+    type: uint16
+    value: 0
+  - name: detail_8121
+    area: holding_register
+    address: 8121
+    type: uint16
+    value: 0
+  - name: detail_8122
+    area: holding_register
+    address: 8122
+    type: uint16
+    value: 0
+  - name: detail_8123
+    area: holding_register
+    address: 8123
+    type: uint16
+    value: 0
+  - name: detail_8124
+    area: holding_register
+    address: 8124
+    type: uint16
+    value: 0
+  - name: detail_8125
+    area: holding_register
+    address: 8125
+    type: uint16
+    value: 0
+  - name: detail_8126
+    area: holding_register
+    address: 8126
+    type: uint16
+    value: 0
+  - name: detail_8127
+    area: holding_register
+    address: 8127
+    type: uint16
+    value: 0
+  - name: detail_8128
+    area: holding_register
+    address: 8128
+    type: uint16
+    value: 0
+  - name: detail_8129
+    area: holding_register
+    address: 8129
+    type: uint16
+    value: 0
+  - name: detail_8130
+    area: holding_register
+    address: 8130
+    type: uint16
+    value: 0
+  - name: detail_8131
+    area: holding_register
+    address: 8131
+    type: uint16
+    value: 0
+  - name: detail_8132
+    area: holding_register
+    address: 8132
+    type: uint16
+    value: 0
+  - name: detail_8133
+    area: holding_register
+    address: 8133
+    type: uint16
+    value: 0
+  - name: detail_8134
+    area: holding_register
+    address: 8134
+    type: uint16
+    value: 0
+  - name: detail_8135
+    area: holding_register
+    address: 8135
+    type: uint16
+    value: 0
+  - name: detail_8136
+    area: holding_register
+    address: 8136
+    type: uint16
+    value: 0
+  - name: detail_8137
+    area: holding_register
+    address: 8137
+    type: uint16
+    value: 0
+  - name: fault_code
+    area: holding_register
+    address: 8166
+    type: uint16
+    value: 0

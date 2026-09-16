@@ -4,7 +4,7 @@ import asyncio
 import logging
 import signal
 from .config import load_config
-from .datastore import Datastore
+from .datastore import make_datastore
 from .logging import ChannelLog, HideFrameDump
 from .transports import tcp, udp, rtu, rtu_over_udp
 
@@ -15,14 +15,16 @@ class Simulator:
     def __init__(self, config):
         self.config = config
         self.servers = []
+        self.stores = []
 
     async def start(self):
         try:
             for channel in self.config['channels']:
                 log = ChannelLog(channel, self.config.get('logging', {}).get('hex', False))
-                store = Datastore(channel['devices'])
+                store = make_datastore(channel['devices'], fixture_options=channel.get('fixture_options'))
                 server = await TRANSPORTS[channel['protocol']].start(channel, store, log)
                 self.servers.append(server)
+                self.stores.append(store)
                 endpoint = (f"alias={channel['alias']} pty={server.pty.slave_name} "
                             f"baudrate={channel.get('baudrate', 9600)} bytesize={channel.get('bytesize', 8)} "
                             f"parity={channel.get('parity', 'N')} stopbits={channel.get('stopbits', 1)}"
@@ -39,6 +41,7 @@ class Simulator:
         for server in reversed(self.servers):
             await server.shutdown()
         self.servers.clear()
+        self.stores.clear()
 
 
 async def run(config):
