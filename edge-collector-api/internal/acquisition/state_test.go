@@ -189,6 +189,29 @@ func TestCurrentStateStoreAggregatesChannelRuntimeStatus(t *testing.T) {
 	assertChannelStatus(t, store, 21, ChannelStatusIdle)
 }
 
+func TestCurrentStateStoreClearsChannelErrorAfterRecovery(t *testing.T) {
+	store := NewCurrentStateStore()
+	channel := Channel{ID: 40, Name: "恢复测试通道", Protocol: ProtocolModbusTCP}
+	device := Device{
+		ID: 41, Name: "恢复测试设备", ChannelID: channel.ID, UnitID: 1,
+		Enabled: Enabled, FailureThreshold: 1,
+		RegisterBlocks: []RegisterBlock{{ID: 401, Name: "原始块", FunctionCode: FunctionCodeReadHoldingRegisters, Quantity: 1}},
+	}
+	store.ConfigureChannels([]Channel{channel}, []Device{device})
+
+	store.RecordCycle(device, []RegisterBlockRead{{Block: device.RegisterBlocks[0], Err: errors.New("endpoint timeout")}}, time.Now().UTC())
+	failed, ok := store.ChannelState(channel.ID)
+	if !ok || failed.Status != ChannelStatusOffline || failed.LastError != "endpoint timeout" {
+		t.Fatalf("failed channel state = %#v, exists=%v, want offline with endpoint error", failed, ok)
+	}
+
+	store.RecordCycle(device, []RegisterBlockRead{{Block: device.RegisterBlocks[0], Values: []uint16{42}}}, time.Now().UTC())
+	recovered, ok := store.ChannelState(channel.ID)
+	if !ok || recovered.Status != ChannelStatusOnline || recovered.LastError != "" {
+		t.Fatalf("recovered channel state = %#v, exists=%v, want online without stale error", recovered, ok)
+	}
+}
+
 func assertChannelStatus(t *testing.T, store *CurrentStateStore, channelID int64, want ChannelRuntimeStatus) {
 	t.Helper()
 	state, ok := store.ChannelState(channelID)

@@ -398,6 +398,7 @@ func (s *CurrentStateStore) updateChannelStateLocked(channelID int64) {
 	hasOnline := false
 	hasStarting := false
 	hasDegraded := false
+	state.LastError = ""
 	for deviceID := range members {
 		deviceState, ok := s.states[deviceID]
 		if !ok || deviceState.Status == StatusInitial {
