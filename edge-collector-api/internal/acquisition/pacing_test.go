@@ -102,13 +102,13 @@ func TestActiveChannelConfigFiltersDisabledDevices(t *testing.T) {
 }
 
 func TestSamePhysicalChannelIgnoresPacingAndScheduleChanges(t *testing.T) {
-	left := Channel{Port: "/dev/ttyUSB0", BaudRate: 19200, DataBits: 8, StopBits: 1, Parity: "N", TimeoutMS: 300, InterRequestDelayMS: 0}
+	left := Channel{Protocol: ProtocolModbusRTU, SerialConfig: &SerialConfig{Port: "/dev/ttyUSB0", BaudRate: 19200, DataBits: 8, StopBits: 1, Parity: "N"}, TimeoutMS: 300, InterRequestDelayMS: 0}
 	right := left
 	right.InterRequestDelayMS = 100
 	if !samePhysicalChannel(left, right) {
 		t.Fatal("pacing-only change unexpectedly requires a new physical session")
 	}
-	right.Port = "/dev/ttyUSB1"
+	right.SerialConfig = &SerialConfig{Port: "/dev/ttyUSB1", BaudRate: 19200, DataBits: 8, StopBits: 1, Parity: "N"}
 	if samePhysicalChannel(left, right) {
 		t.Fatal("port change did not require a new physical session")
 	}

@@ -34,15 +34,26 @@ export type {
   AcquisitionChannelInput,
   AcquisitionChannelPage,
   AcquisitionChannelQuery,
+  AcquisitionChannelRuntimeState,
+  AcquisitionChannelRuntimeStatus,
+  AcquisitionStatusMeta,
+  AcquisitionStatusTone,
   AcquisitionCommunicationStatus,
   AcquisitionCurrentState,
   AcquisitionDevice,
   AcquisitionDeviceInput,
   AcquisitionDevicePage,
   AcquisitionDeviceQuery,
+  AcquisitionNetworkEndpoint,
+  AcquisitionProtocol,
   AcquisitionRegisterBlock,
   AcquisitionRegisterBlockInput,
   AcquisitionRegisterBlockState,
+  AcquisitionSerialConfig,
+} from "./acquisition";
+export {
+  acquisitionChannelRuntimeStatusMeta,
+  acquisitionCommunicationStatusMeta,
 } from "./acquisition";
 export type {
   FileBatchDeleteRequest,

@@ -6,7 +6,7 @@ const state = {
   deviceId: 1,
   deviceName: "测试设备",
   channelId: 1,
-  slaveId: 1,
+  unitId: 1,
   registerBlocks: null,
   status: "INITIAL",
   consecutiveFailures: 0,

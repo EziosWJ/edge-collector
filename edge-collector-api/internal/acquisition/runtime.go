@@ -16,7 +16,7 @@ type ModbusSession interface {
 	SetUnitID(uint8) error
 }
 
-type SessionFactory func(Channel) (ModbusSession, error)
+type SessionFactory func(Channel, Device) (ModbusSession, error)
 
 type ConfigurationLoader func(context.Context) ([]Channel, []Device, error)
 
@@ -125,6 +125,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	retryTicker := time.NewTicker(time.Second)
 	defer retryTicker.Stop()
 	apply := func(snapshot configurationSnapshot) {
+		r.store.ConfigureChannels(snapshot.channels, snapshot.devices)
 		active := activeChannelConfigs(snapshot.channels, snapshot.devices)
 		activeIDs := make(map[int64]struct{}, len(active))
 		for channelID, config := range active {
@@ -221,26 +222,48 @@ func (r *channelRunner) Stop() {
 func (r *channelRunner) Run(ctx context.Context) {
 	current := channelConfig{}
 	nextDue := make(map[int64]time.Time)
-	var session *pacedSession
+	var sharedSession *pacedSession
+	deviceSessions := make(map[int64]*pacedSession)
+	var channelPacer *requestPacer
 	removeCurrentStates := func() {
 		for _, device := range current.devices {
-			r.runtime.store.Remove(device.ID)
+			if !r.runtime.store.IsConfigured(device.ID) {
+				r.runtime.store.Remove(device.ID)
+			}
 		}
 	}
 
-	closeSession := func() {
+	closeSharedSession := func() {
+		if sharedSession == nil {
+			return
+		}
+		if err := sharedSession.Close(); err != nil {
+			r.runtime.logger.Printf("关闭采集通道会话失败 channel_id=%d error=%v", current.channel.ID, err)
+		}
+		sharedSession = nil
+	}
+	closeDeviceSession := func(deviceID int64) {
+		session := deviceSessions[deviceID]
 		if session == nil {
 			return
 		}
 		if err := session.Close(); err != nil {
-			r.runtime.logger.Printf("关闭采集串口失败 channel_id=%d error=%v", current.channel.ID, err)
+			r.runtime.logger.Printf("关闭设备会话失败 channel_id=%d device_id=%d error=%v", current.channel.ID, deviceID, err)
 		}
-		session = nil
+		delete(deviceSessions, deviceID)
+	}
+	closeAllSessions := func() {
+		closeSharedSession()
+		for deviceID := range deviceSessions {
+			closeDeviceSession(deviceID)
+		}
 	}
 
 	apply := func(next channelConfig) {
-		if current.active && (!next.active || !samePhysicalChannel(current.channel, next.channel)) {
-			closeSession()
+		physicalChanged := current.active && (!next.active || !samePhysicalChannel(current.channel, next.channel))
+		if physicalChanged {
+			closeAllSessions()
+			channelPacer = nil
 		}
 
 		oldDevices := make(map[int64]Device, len(current.devices))
@@ -258,7 +281,19 @@ func (r *channelRunner) Run(ctx context.Context) {
 		for deviceID := range oldDevices {
 			if _, exists := newDevices[deviceID]; !exists {
 				delete(nextDue, deviceID)
-				r.runtime.store.Remove(deviceID)
+				closeDeviceSession(deviceID)
+				if !r.runtime.store.IsConfigured(deviceID) {
+					r.runtime.store.Remove(deviceID)
+				}
+			}
+		}
+		if isNetworkChannel(next.channel) {
+			for deviceID, oldDevice := range oldDevices {
+				newDevice, exists := newDevices[deviceID]
+				if exists && !sameDeviceSession(oldDevice, newDevice, current.channel, next.channel) {
+					closeDeviceSession(deviceID)
+					r.runtime.store.Invalidate(newDevice)
+				}
 			}
 		}
 		for deviceID := range nextDue {
@@ -268,14 +303,18 @@ func (r *channelRunner) Run(ctx context.Context) {
 		}
 
 		if !next.active {
-			closeSession()
+			closeAllSessions()
 			for deviceID := range oldDevices {
-				r.runtime.store.Remove(deviceID)
+				if !r.runtime.store.IsConfigured(deviceID) {
+					r.runtime.store.Remove(deviceID)
+				}
 			}
 			nextDue = make(map[int64]time.Time)
 		}
-		if session != nil {
-			session.SetDelay(time.Duration(next.channel.InterRequestDelayMS) * time.Millisecond)
+		if channelPacer == nil {
+			channelPacer = newRequestPacer(time.Duration(next.channel.InterRequestDelayMS) * time.Millisecond)
+		} else {
+			channelPacer.SetDelay(time.Duration(next.channel.InterRequestDelayMS) * time.Millisecond)
 		}
 		current = cloneChannelConfig(next)
 	}
@@ -290,11 +329,11 @@ func (r *channelRunner) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			removeCurrentStates()
-			closeSession()
+			closeAllSessions()
 			return
 		case <-r.stop:
 			removeCurrentStates()
-			closeSession()
+			closeAllSessions()
 			return
 		default:
 		}
@@ -306,48 +345,11 @@ func (r *channelRunner) Run(ctx context.Context) {
 			result := waitForRunnerEvent(ctx, r.stop, r.updates, 0)
 			if result.stopped {
 				removeCurrentStates()
-				closeSession()
+				closeAllSessions()
 				return
 			}
 			apply(result.config)
 			continue
-		}
-
-		if session == nil {
-			raw, err := r.runtime.factory(current.channel)
-			if err == nil && raw == nil {
-				err = fmt.Errorf("Modbus 会话工厂返回空会话")
-			}
-			if err != nil {
-				r.runtime.recordChannelFailure(current.devices, err)
-				result := waitForRunnerEvent(ctx, r.stop, r.updates, time.Second)
-				if result.stopped {
-					removeCurrentStates()
-					return
-				}
-				if result.updated {
-					apply(result.config)
-				}
-				continue
-			}
-
-			session = newPacedSession(raw, time.Duration(current.channel.InterRequestDelayMS)*time.Millisecond)
-			if err := session.Open(); err != nil {
-				r.runtime.recordChannelFailure(current.devices, err)
-				if closeErr := session.Close(); closeErr != nil {
-					r.runtime.logger.Printf("关闭未打开的采集串口失败 channel_id=%d error=%v", current.channel.ID, closeErr)
-				}
-				session = nil
-				result := waitForRunnerEvent(ctx, r.stop, r.updates, time.Second)
-				if result.stopped {
-					removeCurrentStates()
-					return
-				}
-				if result.updated {
-					apply(result.config)
-				}
-				continue
-			}
 		}
 
 		device, due, waitFor := nextDevice(current.devices, nextDue, time.Now())
@@ -355,7 +357,7 @@ func (r *channelRunner) Run(ctx context.Context) {
 			result := waitForRunnerEvent(ctx, r.stop, r.updates, waitFor)
 			if result.stopped {
 				removeCurrentStates()
-				closeSession()
+				closeAllSessions()
 				return
 			}
 			if result.updated {
@@ -364,7 +366,57 @@ func (r *channelRunner) Run(ctx context.Context) {
 			continue
 		}
 
-		pollDeviceOnce(ctx, current.channel, device, session, r.runtime.store)
+		var session *pacedSession
+		if isNetworkChannel(current.channel) {
+			session = deviceSessions[device.ID]
+			if session == nil {
+				raw, err := r.runtime.factory(current.channel, device)
+				if err == nil && raw == nil {
+					err = fmt.Errorf("Modbus 会话工厂返回空会话")
+				}
+				if err == nil {
+					session = newPacedSessionWithPacer(raw, channelPacer)
+					err = session.Open()
+				}
+				if err != nil {
+					if session != nil {
+						_ = session.Close()
+					}
+					delete(deviceSessions, device.ID)
+					r.runtime.recordDeviceFailure(device, err)
+					nextDue[device.ID] = nextDeviceDue(device)
+					continue
+				}
+				deviceSessions[device.ID] = session
+			}
+		} else {
+			session = sharedSession
+			if session == nil {
+				raw, err := r.runtime.factory(current.channel, device)
+				if err == nil && raw == nil {
+					err = fmt.Errorf("Modbus 会话工厂返回空会话")
+				}
+				if err != nil {
+					r.runtime.recordChannelFailure(current.devices, err)
+					nextDue[device.ID] = nextDeviceDue(device)
+					continue
+				}
+				session = newPacedSessionWithPacer(raw, channelPacer)
+				if err := session.Open(); err != nil {
+					r.runtime.recordChannelFailure(current.devices, err)
+					_ = session.Close()
+					sharedSession = nil
+					nextDue[device.ID] = nextDeviceDue(device)
+					continue
+				}
+				sharedSession = session
+			}
+		}
+
+		err := pollDeviceCycle(ctx, current.channel, device, session, r.runtime.store, isNetworkChannel(current.channel))
+		if isNetworkChannel(current.channel) && err != nil && !isModbusExceptionError(err) {
+			closeDeviceSession(device.ID)
+		}
 		interval := time.Duration(device.PollIntervalMS) * time.Millisecond
 		if interval <= 0 {
 			interval = time.Second
@@ -372,6 +424,28 @@ func (r *channelRunner) Run(ctx context.Context) {
 		// The next period starts after the complete device read cycle.
 		nextDue[device.ID] = time.Now().Add(interval)
 	}
+}
+
+func isNetworkChannel(channel Channel) bool {
+	return channel.Protocol == ProtocolModbusTCP || channel.Protocol == ProtocolModbusUDP || channel.Protocol == ProtocolModbusRTUOverUDP
+}
+
+func sameDeviceSession(left, right Device, leftChannel, rightChannel Channel) bool {
+	if left.UnitID != right.UnitID || left.ChannelID != right.ChannelID || leftChannel.Protocol != rightChannel.Protocol || leftChannel.TimeoutMS != rightChannel.TimeoutMS {
+		return false
+	}
+	if left.NetworkEndpoint == nil || right.NetworkEndpoint == nil {
+		return left.NetworkEndpoint == nil && right.NetworkEndpoint == nil
+	}
+	return *left.NetworkEndpoint == *right.NetworkEndpoint
+}
+
+func nextDeviceDue(device Device) time.Time {
+	interval := time.Duration(device.PollIntervalMS) * time.Millisecond
+	if interval <= 0 {
+		interval = time.Second
+	}
+	return time.Now().Add(interval)
 }
 
 type runnerWaitResult struct {
@@ -416,6 +490,15 @@ func (r *Runtime) recordChannelFailure(devices []Device, err error) {
 	r.logger.Printf("采集通道不可用 error=%v", err)
 }
 
+func (r *Runtime) recordDeviceFailure(device Device, err error) {
+	reads := make([]RegisterBlockRead, len(device.RegisterBlocks))
+	for index, block := range device.RegisterBlocks {
+		reads[index] = RegisterBlockRead{Block: block, Err: err}
+	}
+	r.store.RecordCycle(device, reads, time.Now().UTC())
+	r.logger.Printf("采集设备不可用 device_id=%d error=%v", device.ID, err)
+}
+
 func PollChannelOnce(ctx context.Context, channel Channel, devices []Device, session ModbusSession, store *CurrentStateStore) error {
 	if session == nil || store == nil {
 		return fmt.Errorf("采集通道依赖不能为空")
@@ -424,29 +507,39 @@ func PollChannelOnce(ctx context.Context, channel Channel, devices []Device, ses
 		if device.Enabled != Enabled || device.ChannelID != channel.ID {
 			continue
 		}
-		pollDeviceOnce(ctx, channel, device, session, store)
+		_ = pollDeviceCycle(ctx, channel, device, session, store, false)
 	}
 	return nil
 }
 
-func pollDeviceOnce(ctx context.Context, _ Channel, device Device, session ModbusSession, store *CurrentStateStore) {
+func pollDeviceCycle(ctx context.Context, _ Channel, device Device, session ModbusSession, store *CurrentStateStore, stopOnError bool) error {
 	reads := make([]RegisterBlockRead, 0, len(device.RegisterBlocks))
 	var setupErr error
-	if device.DeviceType != "" && device.DeviceType != DeviceTypeFeedProtector {
-		setupErr = fmt.Errorf("不支持的设备类型: %s", device.DeviceType)
-	} else if err := session.SetUnitID(device.SlaveID); err != nil {
-		setupErr = fmt.Errorf("设置 Modbus 地址 %d 失败: %w", device.SlaveID, err)
+	if err := session.SetUnitID(device.UnitID); err != nil {
+		setupErr = fmt.Errorf("设置 Modbus 地址 %d 失败: %w", device.UnitID, err)
 	}
 	for _, block := range device.RegisterBlocks {
 		read := RegisterBlockRead{Block: block}
 		if setupErr != nil {
 			read.Err = setupErr
 		} else {
-			read.Values, read.Err = readRegisterBlock(ctx, session, device.SlaveID, block)
+			read.Values, read.Err = readRegisterBlock(ctx, session, device.UnitID, block)
 		}
 		reads = append(reads, read)
+		if stopOnError && read.Err != nil && !isModbusExceptionError(read.Err) {
+			break
+		}
 	}
 	store.RecordCycle(device, reads, time.Now().UTC())
+	if setupErr != nil {
+		return setupErr
+	}
+	for _, read := range reads {
+		if read.Err != nil {
+			return read.Err
+		}
+	}
+	return nil
 }
 
 func activeChannelConfigs(channels []Channel, devices []Device) map[int64]channelConfig {
@@ -506,17 +599,37 @@ func nextDevice(devices []Device, nextDue map[int64]time.Time, now time.Time) (D
 }
 
 func samePhysicalChannel(left, right Channel) bool {
-	return left.Port == right.Port && left.BaudRate == right.BaudRate && left.DataBits == right.DataBits && left.StopBits == right.StopBits && left.Parity == right.Parity && left.TimeoutMS == right.TimeoutMS
+	if left.Protocol != right.Protocol || left.TimeoutMS != right.TimeoutMS {
+		return false
+	}
+	if left.Protocol != ProtocolModbusRTU {
+		return true
+	}
+	if left.SerialConfig == nil || right.SerialConfig == nil {
+		return left.SerialConfig == nil && right.SerialConfig == nil
+	}
+	return *left.SerialConfig == *right.SerialConfig
 }
 
 func cloneChannels(channels []Channel) []Channel {
-	return append([]Channel(nil), channels...)
+	result := append([]Channel(nil), channels...)
+	for index := range result {
+		if result[index].SerialConfig != nil {
+			serial := *result[index].SerialConfig
+			result[index].SerialConfig = &serial
+		}
+	}
+	return result
 }
 
 func cloneDevices(devices []Device) []Device {
 	result := append([]Device(nil), devices...)
 	for index := range result {
 		result[index].RegisterBlocks = append([]RegisterBlock(nil), result[index].RegisterBlocks...)
+		if result[index].NetworkEndpoint != nil {
+			endpoint := *result[index].NetworkEndpoint
+			result[index].NetworkEndpoint = &endpoint
+		}
 	}
 	return result
 }

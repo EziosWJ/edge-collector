@@ -10,7 +10,7 @@ const states: AcquisitionCurrentState[] = [
     deviceId: 1,
     deviceName: "北侧馈电保护器",
     channelId: 1,
-    slaveId: 1,
+    unitId: 1,
     registerBlocks: [
       {
         id: 101,
@@ -34,7 +34,7 @@ const states: AcquisitionCurrentState[] = [
     deviceId: 2,
     deviceName: "南侧馈电保护器",
     channelId: 1,
-    slaveId: 2,
+    unitId: 2,
     registerBlocks: [
       {
         id: 102,
@@ -60,7 +60,7 @@ const states: AcquisitionCurrentState[] = [
     deviceId: 3,
     deviceName: "待配置设备",
     channelId: 2,
-    slaveId: 3,
+    unitId: 3,
     registerBlocks: [],
     lastAttemptAt: null,
     lastSuccessAt: null,
@@ -71,7 +71,7 @@ const states: AcquisitionCurrentState[] = [
     deviceId: 4,
     deviceName: "失联设备",
     channelId: 2,
-    slaveId: 4,
+    unitId: 4,
     registerBlocks: [
       {
         id: 104,
@@ -97,7 +97,7 @@ const states: AcquisitionCurrentState[] = [
     deviceId: 5,
     deviceName: "等待首轮设备",
     channelId: 3,
-    slaveId: 5,
+    unitId: 5,
     registerBlocks: [
       {
         id: 105,
@@ -123,6 +123,12 @@ const nativeFetch = window.fetch.bind(window);
 let flakyCalls = 0;
 window.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (url.includes("/api/v1/acquisition/channel-state")) {
+    return new Response(JSON.stringify({ code: 200, message: "OK", data: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   if (!url.includes("/api/v1/acquisition/states")) {
     return nativeFetch(input, init);
   }

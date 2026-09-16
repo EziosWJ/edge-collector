@@ -2,9 +2,13 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/simonvetter/modbus"
@@ -15,34 +19,49 @@ type modbusSession struct {
 }
 
 func NewModbusSessionFactory() SessionFactory {
-	return func(channel Channel) (ModbusSession, error) {
-		return newModbusSession(channel)
+	return func(channel Channel, device Device) (ModbusSession, error) {
+		return newModbusSession(channel, device)
 	}
 }
 
-func newModbusSession(channel Channel) (ModbusSession, error) {
-	parity, err := modbusParity(channel.Parity)
-	if err != nil {
-		return nil, err
-	}
-	if channel.Port == "" {
-		return nil, fmt.Errorf("串口设备不能为空")
-	}
+func newModbusSession(channel Channel, device Device) (ModbusSession, error) {
 	timeout := time.Duration(channel.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 300 * time.Millisecond
 	}
-	client, err := modbus.NewClient(&modbus.ClientConfiguration{
-		URL:      "rtu://" + channel.Port,
-		Speed:    uint(channel.BaudRate),
-		DataBits: uint(channel.DataBits),
-		Parity:   parity,
-		StopBits: uint(channel.StopBits),
-		Timeout:  timeout,
-		Logger:   log.New(io.Discard, "", 0),
-	})
+	config := &modbus.ClientConfiguration{Timeout: timeout, Logger: log.New(io.Discard, "", 0)}
+	switch channel.Protocol {
+	case "", ProtocolModbusRTU:
+		if channel.SerialConfig == nil {
+			return nil, fmt.Errorf("串口通道配置不能为空")
+		}
+		serial := channel.SerialConfig
+		parity, err := modbusParity(serial.Parity)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(serial.Port) == "" {
+			return nil, fmt.Errorf("串口设备不能为空")
+		}
+		config.URL = "rtu://" + serial.Port
+		config.Speed = uint(serial.BaudRate)
+		config.DataBits = uint(serial.DataBits)
+		config.Parity = parity
+		config.StopBits = uint(serial.StopBits)
+	case ProtocolModbusTCP, ProtocolModbusUDP, ProtocolModbusRTUOverUDP:
+		if device.NetworkEndpoint == nil || strings.TrimSpace(device.NetworkEndpoint.Host) == "" || device.NetworkEndpoint.Port < 1 || device.NetworkEndpoint.Port > 65535 {
+			return nil, fmt.Errorf("网络设备 endpoint 配置不能为空")
+		}
+		host := strings.TrimSpace(device.NetworkEndpoint.Host)
+		host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+		scheme := map[string]string{ProtocolModbusTCP: "tcp", ProtocolModbusUDP: "udp", ProtocolModbusRTUOverUDP: "rtuoverudp"}[channel.Protocol]
+		config.URL = scheme + "://" + net.JoinHostPort(host, strconv.Itoa(device.NetworkEndpoint.Port))
+	default:
+		return nil, fmt.Errorf("不支持的 Modbus 协议: %s", channel.Protocol)
+	}
+	client, err := modbus.NewClient(config)
 	if err != nil {
-		return nil, fmt.Errorf("创建 Modbus RTU 客户端失败: %w", err)
+		return nil, fmt.Errorf("创建 Modbus 客户端失败: %w", err)
 	}
 	return &modbusSession{client: client}, nil
 }
@@ -72,4 +91,23 @@ func modbusParity(value string) (uint, error) {
 	default:
 		return 0, fmt.Errorf("不支持的串口校验方式: %s", value)
 	}
+}
+
+func isModbusExceptionError(err error) bool {
+	for _, exception := range []error{
+		modbus.ErrIllegalFunction,
+		modbus.ErrIllegalDataAddress,
+		modbus.ErrIllegalDataValue,
+		modbus.ErrServerDeviceFailure,
+		modbus.ErrAcknowledge,
+		modbus.ErrServerDeviceBusy,
+		modbus.ErrMemoryParityError,
+		modbus.ErrGWPathUnavailable,
+		modbus.ErrGWTargetFailedToRespond,
+	} {
+		if errors.Is(err, exception) {
+			return true
+		}
+	}
+	return false
 }

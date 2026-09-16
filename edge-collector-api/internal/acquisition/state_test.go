@@ -9,7 +9,7 @@ import (
 func TestCurrentStateStoreKeepsFailedBlockValueAndMarksOffline(t *testing.T) {
 	store := NewCurrentStateStore()
 	device := Device{
-		ID: 7, Name: "设备 7", ChannelID: 2, SlaveID: 3, FailureThreshold: 3,
+		ID: 7, Name: "设备 7", ChannelID: 2, UnitID: 3, FailureThreshold: 3,
 		RegisterBlocks: []RegisterBlock{
 			{ID: 10, Name: "电气", FunctionCode: 3, StartAddress: 0, Quantity: 2, SortOrder: 0},
 			{ID: 11, Name: "状态", FunctionCode: 4, StartAddress: 6, Quantity: 1, SortOrder: 1},
@@ -98,6 +98,55 @@ func TestCurrentStateStoreResetsOnlyStructuralBlockChanges(t *testing.T) {
 	}
 }
 
+func TestCurrentStateStoreInvalidatesSnapshotWhenDeviceAddressChanges(t *testing.T) {
+	store := NewCurrentStateStore()
+	device := Device{
+		ID: 9, Name: "网络设备", ChannelID: 2, UnitID: 1,
+		NetworkEndpoint: &NetworkEndpoint{Host: "192.0.2.10", Port: 502},
+		RegisterBlocks:  []RegisterBlock{{ID: 30, Name: "原始", FunctionCode: 3, StartAddress: 0, Quantity: 1}},
+	}
+	at := time.Date(2026, 9, 16, 9, 0, 0, 0, time.UTC)
+	store.Ensure(device)
+	store.RecordCycle(device, []RegisterBlockRead{{Block: device.RegisterBlocks[0], Values: []uint16{1234}}}, at)
+
+	updated := device
+	updated.UnitID = 2
+	updated.NetworkEndpoint = &NetworkEndpoint{Host: "192.0.2.11", Port: 502}
+	store.Ensure(updated)
+	state, ok := store.Get(device.ID)
+	if !ok || state.UnitID != 2 || state.NetworkEndpoint == nil || state.NetworkEndpoint.Host != "192.0.2.11" {
+		t.Fatalf("updated identity state = %#v, exists=%v", state, ok)
+	}
+	if state.Status != StatusInitial || state.RegisterBlocks[0].Valid || state.RegisterBlocks[0].Values[0] == nil || *state.RegisterBlocks[0].Values[0] != 1234 {
+		t.Fatalf("invalidated state = %#v, want retained value marked invalid", state)
+	}
+	if state.LastSuccessAt == nil || !state.LastSuccessAt.Equal(at) {
+		t.Fatalf("LastSuccessAt = %v, want retained timestamp %v", state.LastSuccessAt, at)
+	}
+}
+
+func TestCurrentStateStoreRejectsStaleCycleAfterDeviceMoves(t *testing.T) {
+	store := NewCurrentStateStore()
+	channelA := Channel{ID: 30, Protocol: ProtocolModbusRTU}
+	channelB := Channel{ID: 31, Protocol: ProtocolModbusRTU}
+	block := RegisterBlock{ID: 301, Name: "原始块", FunctionCode: FunctionCodeReadHoldingRegisters, StartAddress: 0, Quantity: 1}
+	oldDevice := Device{ID: 32, Name: "迁移设备", ChannelID: channelA.ID, UnitID: 1, Enabled: Enabled, RegisterBlocks: []RegisterBlock{block}}
+	newDevice := oldDevice
+	newDevice.ChannelID = channelB.ID
+
+	store.ConfigureChannels([]Channel{channelA}, []Device{oldDevice})
+	store.Ensure(oldDevice)
+	store.RecordCycle(oldDevice, []RegisterBlockRead{{Block: block, Values: []uint16{100}}}, time.Now().UTC())
+	store.ConfigureChannels([]Channel{channelB}, []Device{newDevice})
+	store.Ensure(newDevice)
+	store.RecordCycle(oldDevice, []RegisterBlockRead{{Block: block, Values: []uint16{999}}}, time.Now().UTC())
+
+	state, ok := store.Get(oldDevice.ID)
+	if !ok || state.ChannelID != channelB.ID || state.RegisterBlocks[0].Valid || state.RegisterBlocks[0].Values[0] == nil || *state.RegisterBlocks[0].Values[0] != 100 {
+		t.Fatalf("stale cycle state = %#v, exists=%v, want new channel with invalidated old value", state, ok)
+	}
+}
+
 func TestCurrentStateStoreRemovesDisabledDevice(t *testing.T) {
 	store := NewCurrentStateStore()
 	device := Device{ID: 8, Name: "设备 8"}
@@ -109,5 +158,41 @@ func TestCurrentStateStoreRemovesDisabledDevice(t *testing.T) {
 	store.Remove(device.ID)
 	if _, ok := store.Get(device.ID); ok {
 		t.Fatal("state still exists after Remove")
+	}
+}
+
+func TestCurrentStateStoreAggregatesChannelRuntimeStatus(t *testing.T) {
+	store := NewCurrentStateStore()
+	channel := Channel{ID: 20, Name: "TCP 轮询组", Protocol: ProtocolModbusTCP}
+	block := RegisterBlock{ID: 200, Name: "原始块", FunctionCode: FunctionCodeReadHoldingRegisters, StartAddress: 0, Quantity: 1}
+	devices := []Device{
+		{ID: 21, Name: "设备 21", ChannelID: 20, UnitID: 1, Enabled: Enabled, FailureThreshold: 1, RegisterBlocks: []RegisterBlock{block}},
+		{ID: 22, Name: "设备 22", ChannelID: 20, UnitID: 1, Enabled: Enabled, FailureThreshold: 1, RegisterBlocks: []RegisterBlock{block}},
+	}
+	store.ConfigureChannels([]Channel{channel}, devices)
+	assertChannelStatus(t, store, 20, ChannelStatusStarting)
+
+	at := time.Date(2026, 9, 16, 8, 0, 0, 0, time.UTC)
+	store.RecordCycle(devices[0], []RegisterBlockRead{{Block: block, Values: []uint16{1}}}, at)
+	assertChannelStatus(t, store, 20, ChannelStatusDegraded)
+	store.RecordCycle(devices[1], []RegisterBlockRead{{Block: block, Values: []uint16{2}}}, at.Add(time.Second))
+	assertChannelStatus(t, store, 20, ChannelStatusOnline)
+
+	store.RecordCycle(devices[0], []RegisterBlockRead{{Block: block, Err: errors.New("timeout")}}, at.Add(2*time.Second))
+	store.RecordCycle(devices[1], []RegisterBlockRead{{Block: block, Err: errors.New("timeout")}}, at.Add(3*time.Second))
+	state, ok := store.ChannelState(20)
+	if !ok || state.Status != ChannelStatusOffline || state.LastAttemptAt == nil || !state.LastAttemptAt.Equal(at.Add(3*time.Second)) {
+		t.Fatalf("channel state = %#v, exists=%v, want offline with latest attempt", state, ok)
+	}
+
+	store.ConfigureChannels([]Channel{{ID: 21, Name: "空通道", Protocol: ProtocolModbusUDP}}, nil)
+	assertChannelStatus(t, store, 21, ChannelStatusIdle)
+}
+
+func assertChannelStatus(t *testing.T, store *CurrentStateStore, channelID int64, want ChannelRuntimeStatus) {
+	t.Helper()
+	state, ok := store.ChannelState(channelID)
+	if !ok || state.Status != want {
+		t.Fatalf("channel %d state = %#v, exists=%v, want %s", channelID, state, ok, want)
 	}
 }

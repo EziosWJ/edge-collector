@@ -42,8 +42,8 @@ uv run modbus-simulator --check-config
 ## 配置与设备映射
 
 - `config/simulator.yaml`：日志、通道、串口参数和设备文件列表。
-- `config/devices/feeder_protector_01.yaml`：Slave 1，holding 原始值从 3000 开始，input 样例值 42。
-- `config/devices/feeder_protector_02.yaml`：Slave 2，holding 原始值从 3100 开始，input 样例值 43。
+- `config/devices/feeder_protector_01.yaml`：Slave 1，holding 原始值从 3000 开始，input 原始样例值 42。
+- `config/devices/feeder_protector_02.yaml`：Slave 2，holding 原始值从 3100 开始，input 原始样例值 43。
 
 所有地址为线上 **零基地址**，不是 40001 风格的显示编号。以下是 raw 联调数据；holding 和 input 是两个独立寄存器空间。
 
@@ -55,11 +55,11 @@ uv run modbus-simulator --check-config
 | holding | 4 | sample-4 | uint16 | 5000 | 5000 |
 | holding | 5 | sample-5 | uint16 | 980 | 980 |
 | holding | 6 | sample-6 | uint16 | 0 | 0 |
-| input | 0 | input_sample | uint16 | 42 | 43 |
+| input | 0 | raw_input_0 | uint16 | 42 | 43 |
 
 这些值仅用于验证 FC03/FC04、地址、数量和显示进制；系统不把它们转换为电压、电流、功率、单位或状态语义。
 
-`value`、动态模拟的 min/max/step 均使用**工程值**：`raw = value / scale`。整数寄存器必须可以精确表示该值；越界、重叠、非法字节序、重复 ID 等会在启动前拒绝。`length` 可省略；填写时必须匹配类型。
+默认 fixture 的 `value`、动态模拟的 min/max/step 均直接表示**原始寄存器值**，不会附带单位、倍率或业务解释。通用模拟器仍支持带 `scale` 的独立类型测试，其换算规则为 `raw = value / scale`；这不属于默认设备映射。整数寄存器必须可以精确表示该值；越界、重叠、非法字节序、重复 ID 等会在启动前拒绝。`length` 可省略；填写时必须匹配类型。
 
 通用类型：bool、uint16、int16、uint32、int32、float32、float64。区域：coil、discrete_input、holding_register、input_register。bool 仅用于前两个区域，其余类型用于寄存器。
 
@@ -74,9 +74,9 @@ uv run modbus-simulator --check-config
 
 `bits` 可保留位号到语义字符串的映射，值仍由整个数值寄存器控制。当前馈电协议未确认 bit 含义，因此默认 `bits: {}`；不要把其他设备的位定义填进来。仓库无 BCD、ASCII、String 的实际协议依据，本阶段不实现这些类型。
 
-## 修改数值、状态与动态模拟
+## 修改原始数值与动态模拟
 
-**本阶段修改 YAML 后重启生效，无热加载。** 例如把设备 1 的 `voltage.value` 从 300 改为 280，重新启动后 Go 读到 280。修改 `status.value` 为 4，Go 下一轮采集得到原始状态值 4；这不意味着已模拟某种确认的告警。当前 Go 无告警详情采集代码。
+**本阶段修改 YAML 后重启生效，无热加载。** 例如把设备 1 的 `raw_holding_0.value` 从 3000 改为 2800，重新启动后 Go 读到原始值 2800。把 `raw_holding_6.value` 改为 4 后，Go 下一轮采集得到原始值 4；该数值不代表任何预设的业务状态或告警。
 
 数值寄存器可添加：
 
@@ -84,9 +84,9 @@ uv run modbus-simulator --check-config
 simulation:
   type: increment
   interval: 1
-  step: 0.1
-  min: 280
-  max: 320
+  step: 100
+  min: 2800
+  max: 3200
 ```
 
 `fixed` 保持初值；`increment` / `decrement` 每 interval 秒加减 step，并在边界停住；`random` 在 min/max 范围内取随机值，整数类型按 scale 量化。没有脚本或表达式引擎。更新在访问设备时按 monotonic 时间补算，无人读取时不启动后台寄存器任务。
@@ -137,18 +137,21 @@ RTU/UDP TX: 01 03 0E 0B B8 00 7D 00 00 04 D2 13 88 03 D4 00 00 84 F4
 
 ## Go 项目如何连接
 
-### 当前实际采集服务：RTU
+### 当前实际采集服务：四种 Modbus transport
 
 采集配置存数据库，通过管理页面“通信通道 / 设备管理”或已有 REST API 创建，不是在 `config.dev.yaml` 写设备寄存器。创建通道 `POST /api/v1/acquisition/channels` 的请求体：
 
 ```json
 {
   "name": "Simulator RS485-1",
-  "port": "/tmp/modbus-rtu0",
-  "baudRate": 9600,
-  "dataBits": 8,
-  "parity": "N",
-  "stopBits": 1,
+  "protocol": "MODBUS_RTU",
+  "serialConfig": {
+    "port": "/tmp/modbus-rtu0",
+    "baudRate": 9600,
+    "dataBits": 8,
+    "parity": "N",
+    "stopBits": 1
+  },
   "timeoutMs": 500,
   "enabled": 1
 }
@@ -161,7 +164,7 @@ RTU/UDP TX: 01 03 0E 0B B8 00 7D 00 00 04 D2 13 88 03 D4 00 00 84 F4
   "name": "馈电保护器-01",
   "deviceType": "FEED_PROTECTOR",
   "channelId": 1,
-  "slaveId": 1,
+  "unitId": 1,
   "pollIntervalMs": 1000,
   "failureThreshold": 3,
   "enabled": 1,
@@ -172,7 +175,7 @@ RTU/UDP TX: 01 03 0E 0B B8 00 7D 00 00 04 D2 13 88 03 D4 00 00 84 F4
 }
 ```
 
-再添加 Slave 2 即可在同一总线采集第二台。第二路用 `/tmp/modbus-rtu1`，Slave 1。REST API 沿用项目现有登录认证。
+再添加 Unit ID 2 即可在同一总线采集第二台。第二路用 `/tmp/modbus-rtu1`，Unit ID 1。REST API 沿用项目现有登录认证。
 
 配置保存后由运行中的 Go API 在当前采集周期结束后热刷新；按项目 Taskfile 启动：根目录 `task api`（SQLite profile 使用 `task api:sqlite`）；新库先运行对应 `task db:migrate` / `task db:migrate:sqlite`。API 存活用 `/health`、数据库就绪用 `/ready`；当前数据为 `/api/v1/acquisition/states`。
 
@@ -180,7 +183,23 @@ RTU/UDP TX: 01 03 0E 0B B8 00 7D 00 00 04 D2 13 88 03 D4 00 00 84 F4
 
 ### TCP / UDP / RTU over UDP
 
-**当前业务采集服务只支持 RTU，不能通过填写 host/port 就启用网络模式。** 模拟器的网络模式已通过项目现用 `github.com/simonvetter/modbus v1.6.4` 实际客户端测试；后续采集 transport 接入时可用：
+网络通道不配置 `serialConfig`；endpoint 属于设备，不属于通道。创建网络设备时，在 `networkEndpoint` 提供 host、port，多个 endpoint 可以在同一通道使用相同 Unit ID：
+
+```json
+{
+  "name": "TCP 设备-01",
+  "deviceType": "FEED_PROTECTOR",
+  "channelId": 2,
+  "unitId": 1,
+  "networkEndpoint": {"host": "127.0.0.1", "port": 1502},
+  "pollIntervalMs": 1000,
+  "failureThreshold": 3,
+  "enabled": 1,
+  "registerBlocks": [{"name": "holding-sample", "functionCode": 3, "startAddress": 0, "quantity": 2, "sortOrder": 0}]
+}
+```
+
+采集服务已接入四种 transport：
 
 | 模式 | Go 库 `ClientConfiguration.URL` | ID |
 |---|---|---|
@@ -218,7 +237,7 @@ uv run python scripts/go_smoke.py
 
 需保持默认 YAML 数值和端口。脚本把 Go harness 放在 `/tmp` 临时 module 中，通过本地 replace 引用真实后端模块，不修改后端 go.mod、go.sum 或数据库；默认 GOCACHE 为 `/tmp/modbus-go-build`。首次编译需现有依赖缓存或可访问 Go 模块源。
 
-脚本直接执行真实 `NewModbusSessionFactory → PollChannelOnce → CurrentStateStore`，按配置读取 FC03/FC04 原始寄存器并检查 `registerBlocks`、ONLINE 状态和 raw 值；再执行三次未知 Slave 超时，检查 OFFLINE、同总线另一 Slave 继续 ONLINE，以及恢复成功。随后对三个网络端点执行真实 Go 库读取。整体进程有 180 秒编译/运行上限，Go 采集检查有 15 秒上下文期限。
+脚本直接执行真实 `NewModbusSessionFactory → PollChannelOnce → Runtime → CurrentStateStore`，按配置读取 FC03/FC04 原始寄存器并检查 `registerBlocks`、ONLINE 状态、通道聚合状态和 raw 值；再执行三次未知 Unit 超时，检查 OFFLINE、同总线另一 Unit 继续 ONLINE，以及恢复成功。随后对四种协议并行运行真实 Runtime，验证各通道互不阻塞；TCP 额外使用不可达 endpoint 验证单设备故障隔离、OFFLINE、endpoint 热更新和恢复，并验证同一轮询组不同 host 字符串可使用重复 Unit ID。整体进程有 180 秒编译/运行上限，Go 采集检查有 15 秒上下文期限。
 
 本次实际验收结果见 [TEST_RESULTS.md](TEST_RESULTS.md)。没有启动完整 API/数据库/UI 链路，不能将模块级真实串口联调等同于完整页面验收。
 

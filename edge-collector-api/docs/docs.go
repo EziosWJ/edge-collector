@@ -3703,6 +3703,27 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/acquisition/channel-state": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "设备采集"
+                ],
+                "summary": "通信通道运行状态列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acquisition.ApiEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/acquisition/channels": {
             "get": {
                 "security": [
@@ -3713,7 +3734,7 @@ const docTemplate = `{
                 "tags": [
                     "设备采集"
                 ],
-                "summary": "RS485 通道分页",
+                "summary": "Modbus 通道分页",
                 "parameters": [
                     {
                         "type": "integer",
@@ -3746,7 +3767,7 @@ const docTemplate = `{
                 "tags": [
                     "设备采集"
                 ],
-                "summary": "新建 RS485 通道",
+                "summary": "新建 Modbus 通道",
                 "parameters": [
                     {
                         "description": "通道配置",
@@ -3778,7 +3799,7 @@ const docTemplate = `{
                 "tags": [
                     "设备采集"
                 ],
-                "summary": "RS485 通道详情",
+                "summary": "Modbus 通道详情",
                 "parameters": [
                     {
                         "type": "integer",
@@ -3806,7 +3827,7 @@ const docTemplate = `{
                 "tags": [
                     "设备采集"
                 ],
-                "summary": "修改 RS485 通道",
+                "summary": "修改 Modbus 通道",
                 "parameters": [
                     {
                         "type": "integer",
@@ -3843,7 +3864,7 @@ const docTemplate = `{
                 "tags": [
                     "设备采集"
                 ],
-                "summary": "删除 RS485 通道",
+                "summary": "删除 Modbus 通道",
                 "parameters": [
                     {
                         "type": "integer",
@@ -4097,12 +4118,6 @@ const docTemplate = `{
         "acquisition.channelRequest": {
             "type": "object",
             "properties": {
-                "baudRate": {
-                    "type": "integer"
-                },
-                "dataBits": {
-                    "type": "integer"
-                },
                 "enabled": {
                     "type": "integer"
                 },
@@ -4112,14 +4127,11 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
-                "parity": {
+                "protocol": {
                     "type": "string"
                 },
-                "port": {
-                    "type": "string"
-                },
-                "stopBits": {
-                    "type": "integer"
+                "serialConfig": {
+                    "$ref": "#/definitions/acquisition.serialConfigRequest"
                 },
                 "timeoutMs": {
                     "type": "integer"
@@ -4144,6 +4156,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "networkEndpoint": {
+                    "$ref": "#/definitions/acquisition.networkEndpointRequest"
+                },
                 "pollIntervalMs": {
                     "type": "integer"
                 },
@@ -4153,7 +4168,18 @@ const docTemplate = `{
                         "$ref": "#/definitions/acquisition.registerBlockRequest"
                     }
                 },
-                "slaveId": {
+                "unitId": {
+                    "type": "integer"
+                }
+            }
+        },
+        "acquisition.networkEndpointRequest": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "port": {
                     "type": "integer"
                 }
             }
@@ -4177,6 +4203,26 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "startAddress": {
+                    "type": "integer"
+                }
+            }
+        },
+        "acquisition.serialConfigRequest": {
+            "type": "object",
+            "properties": {
+                "baudRate": {
+                    "type": "integer"
+                },
+                "dataBits": {
+                    "type": "integer"
+                },
+                "parity": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "string"
+                },
+                "stopBits": {
                     "type": "integer"
                 }
             }

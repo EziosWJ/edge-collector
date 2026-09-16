@@ -3,6 +3,7 @@ import type {
   AcquisitionChannel,
   AcquisitionChannelInput,
   AcquisitionChannelPage,
+  AcquisitionChannelRuntimeState,
   AcquisitionChannelQuery,
   AcquisitionCurrentState,
   AcquisitionDevice,
@@ -65,4 +66,8 @@ export function getAcquisitionStates() {
 
 export function getAcquisitionState(id: number) {
   return http.get<AcquisitionCurrentState>(`${BASE_PATH}/states/${id}`);
+}
+
+export function getAcquisitionChannelStates() {
+  return http.get<AcquisitionChannelRuntimeState[]>(`${BASE_PATH}/channel-state`);
 }

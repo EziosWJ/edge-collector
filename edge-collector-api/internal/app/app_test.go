@@ -485,7 +485,10 @@ func (emptyAcquisitionStore) PageDevices(context.Context, acquisition.DeviceQuer
 func (emptyAcquisitionStore) FindDevice(context.Context, int64) (*acquisition.Device, error) {
 	return nil, acquisition.ErrNotFound
 }
-func (emptyAcquisitionStore) SlaveExists(context.Context, int64, uint8, int64) (bool, error) {
+func (emptyAcquisitionStore) UnitIDExists(context.Context, int64, uint8, int64) (bool, error) {
+	return false, nil
+}
+func (emptyAcquisitionStore) NetworkEndpointExists(context.Context, int64, string, int, uint8, int64) (bool, error) {
 	return false, nil
 }
 func (emptyAcquisitionStore) CreateDevice(context.Context, acquisition.Device, audit.Event) (acquisition.Device, error) {

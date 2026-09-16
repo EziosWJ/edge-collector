@@ -55,6 +55,7 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 
 	router.GET("/states", handler.statesList)
 	router.GET("/states/:id", handler.stateDetail)
+	router.GET("/channel-state", handler.channelStatesList)
 }
 
 // ApiEnvelope documents the shared HTTP response shape for Swagger.
@@ -65,26 +66,37 @@ type ApiEnvelope struct {
 }
 
 type channelRequest struct {
-	Name                string `json:"name"`
-	Port                string `json:"port"`
-	BaudRate            int    `json:"baudRate"`
-	DataBits            int    `json:"dataBits"`
-	StopBits            int    `json:"stopBits"`
-	Parity              string `json:"parity"`
-	TimeoutMS           int    `json:"timeoutMs"`
-	InterRequestDelayMS int    `json:"interRequestDelayMs"`
-	Enabled             int    `json:"enabled"`
+	Name                string               `json:"name"`
+	Protocol            string               `json:"protocol"`
+	SerialConfig        *serialConfigRequest `json:"serialConfig"`
+	TimeoutMS           int                  `json:"timeoutMs"`
+	InterRequestDelayMS int                  `json:"interRequestDelayMs"`
+	Enabled             int                  `json:"enabled"`
 }
 
 type deviceRequest struct {
-	Name             string                 `json:"name"`
-	DeviceType       string                 `json:"deviceType"`
-	ChannelID        int64                  `json:"channelId"`
-	SlaveID          uint8                  `json:"slaveId"`
-	PollIntervalMS   int                    `json:"pollIntervalMs"`
-	FailureThreshold int                    `json:"failureThreshold"`
-	Enabled          int                    `json:"enabled"`
-	RegisterBlocks   []registerBlockRequest `json:"registerBlocks"`
+	Name             string                  `json:"name"`
+	DeviceType       string                  `json:"deviceType"`
+	ChannelID        int64                   `json:"channelId"`
+	UnitID           uint8                   `json:"unitId"`
+	NetworkEndpoint  *networkEndpointRequest `json:"networkEndpoint"`
+	PollIntervalMS   int                     `json:"pollIntervalMs"`
+	FailureThreshold int                     `json:"failureThreshold"`
+	Enabled          int                     `json:"enabled"`
+	RegisterBlocks   []registerBlockRequest  `json:"registerBlocks"`
+}
+
+type serialConfigRequest struct {
+	Port     string `json:"port"`
+	BaudRate int    `json:"baudRate"`
+	DataBits int    `json:"dataBits"`
+	StopBits int    `json:"stopBits"`
+	Parity   string `json:"parity"`
+}
+
+type networkEndpointRequest struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
 }
 
 type registerBlockRequest struct {
@@ -97,22 +109,30 @@ type registerBlockRequest struct {
 }
 
 func (r channelRequest) input() ChannelInput {
-	if r.BaudRate == 0 {
-		r.BaudRate = 19200
+	if r.Protocol == "" {
+		r.Protocol = ProtocolModbusRTU
 	}
-	if r.DataBits == 0 {
-		r.DataBits = 8
-	}
-	if r.StopBits == 0 {
-		r.StopBits = 2
-	}
-	if strings.TrimSpace(r.Parity) == "" {
-		r.Parity = "N"
+	serialConfig := r.SerialConfig
+	var serial *SerialConfig
+	if serialConfig != nil {
+		if serialConfig.BaudRate == 0 {
+			serialConfig.BaudRate = 19200
+		}
+		if serialConfig.DataBits == 0 {
+			serialConfig.DataBits = 8
+		}
+		if serialConfig.StopBits == 0 {
+			serialConfig.StopBits = 2
+		}
+		if strings.TrimSpace(serialConfig.Parity) == "" {
+			serialConfig.Parity = "N"
+		}
+		serial = &SerialConfig{Port: serialConfig.Port, BaudRate: serialConfig.BaudRate, DataBits: serialConfig.DataBits, StopBits: serialConfig.StopBits, Parity: serialConfig.Parity}
 	}
 	if r.TimeoutMS == 0 {
 		r.TimeoutMS = 300
 	}
-	return ChannelInput{Name: r.Name, Port: r.Port, BaudRate: r.BaudRate, DataBits: r.DataBits, StopBits: r.StopBits, Parity: r.Parity, TimeoutMS: r.TimeoutMS, InterRequestDelayMS: r.InterRequestDelayMS, Enabled: r.Enabled}
+	return ChannelInput{Name: r.Name, Protocol: r.Protocol, SerialConfig: serial, TimeoutMS: r.TimeoutMS, InterRequestDelayMS: r.InterRequestDelayMS, Enabled: r.Enabled}
 }
 
 func (r deviceRequest) input() DeviceInput {
@@ -129,11 +149,15 @@ func (r deviceRequest) input() DeviceInput {
 	for index, block := range r.RegisterBlocks {
 		blocks[index] = RegisterBlockInput{ID: block.ID, Name: block.Name, FunctionCode: block.FunctionCode, StartAddress: block.StartAddress, Quantity: block.Quantity, SortOrder: block.SortOrder}
 	}
-	return DeviceInput{Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, SlaveID: r.SlaveID, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled, RegisterBlocks: blocks}
+	var endpoint *NetworkEndpoint
+	if r.NetworkEndpoint != nil {
+		endpoint = &NetworkEndpoint{Host: r.NetworkEndpoint.Host, Port: r.NetworkEndpoint.Port}
+	}
+	return DeviceInput{Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, UnitID: r.UnitID, NetworkEndpoint: endpoint, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled, RegisterBlocks: blocks}
 }
 
 // pageChannels godoc
-// @Summary RS485 通道分页
+// @Summary Modbus 通道分页
 // @Tags 设备采集
 // @Security BearerAuth
 // @Param page query int false "页码"
@@ -146,7 +170,7 @@ func (h *Handler) pageChannels(c *gin.Context) {
 }
 
 // channelDetail godoc
-// @Summary RS485 通道详情
+// @Summary Modbus 通道详情
 // @Tags 设备采集
 // @Security BearerAuth
 // @Param id path int true "通道 ID"
@@ -162,7 +186,7 @@ func (h *Handler) channelDetail(c *gin.Context) {
 }
 
 // createChannel godoc
-// @Summary 新建 RS485 通道
+// @Summary 新建 Modbus 通道
 // @Tags 设备采集
 // @Security BearerAuth
 // @Param request body channelRequest true "通道配置"
@@ -179,7 +203,7 @@ func (h *Handler) createChannel(c *gin.Context) {
 }
 
 // updateChannel godoc
-// @Summary 修改 RS485 通道
+// @Summary 修改 Modbus 通道
 // @Tags 设备采集
 // @Security BearerAuth
 // @Param id path int true "通道 ID"
@@ -201,7 +225,7 @@ func (h *Handler) updateChannel(c *gin.Context) {
 }
 
 // deleteChannel godoc
-// @Summary 删除 RS485 通道
+// @Summary 删除 Modbus 通道
 // @Tags 设备采集
 // @Security BearerAuth
 // @Param id path int true "通道 ID"
@@ -343,12 +367,26 @@ func (h *Handler) stateDetail(c *gin.Context) {
 	platform.WriteError(c, http.StatusNotFound, platform.CodeNotFound, ErrNotFound.Error(), nil)
 }
 
+// channelStatesList godoc
+// @Summary 通信通道运行状态列表
+// @Tags 设备采集
+// @Security BearerAuth
+// @Success 200 {object} ApiEnvelope
+// @Router /api/v1/acquisition/channel-state [get]
+func (h *Handler) channelStatesList(c *gin.Context) {
+	if h.states == nil {
+		platform.OK(c, []ChannelRuntimeState{})
+		return
+	}
+	platform.OK(c, h.states.ChannelStates())
+}
+
 func (h *Handler) write(c *gin.Context, value any, err error) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			platform.WriteError(c, http.StatusNotFound, platform.CodeNotFound, err.Error(), nil)
-		case errors.Is(err, ErrInvalid), errors.Is(err, ErrConflict), errors.Is(err, ErrChannelHasDevices), errors.Is(err, ErrUnsupportedDevice):
+		case errors.Is(err, ErrInvalid), errors.Is(err, ErrConflict), errors.Is(err, ErrChannelHasDevices), errors.Is(err, ErrUnsupportedDevice), errors.Is(err, ErrProtocolImmutable), errors.Is(err, ErrCrossProtocolMove):
 			platform.WriteError(c, http.StatusBadRequest, platform.CodeBadRequest, err.Error(), nil)
 		case platform.IsTemporaryUnavailable(err):
 			platform.TemporaryUnavailable(c)

@@ -16,6 +16,8 @@ var (
 	ErrConflict          = errors.New("采集配置已存在")
 	ErrChannelHasDevices = errors.New("通信通道已关联设备，禁止删除")
 	ErrUnsupportedDevice = errors.New("不支持的设备类型")
+	ErrProtocolImmutable = errors.New("通信通道协议不可修改")
+	ErrCrossProtocolMove = errors.New("设备不能跨协议移动")
 )
 
 type RuntimeRefresher func(context.Context) error
@@ -63,8 +65,12 @@ func (s *Service) UpdateChannel(ctx context.Context, meta AuditMetadata, id int6
 	if err := validateChannel(input); err != nil {
 		return Channel{}, err
 	}
-	if _, err := s.store.FindChannel(ctx, id); err != nil {
+	existing, err := s.store.FindChannel(ctx, id)
+	if err != nil {
 		return Channel{}, err
+	}
+	if existing.Protocol != input.Protocol {
+		return Channel{}, fmt.Errorf("%w: %s -> %s", ErrProtocolImmutable, existing.Protocol, input.Protocol)
 	}
 	value, err := s.store.UpdateChannel(ctx, channelFrom(input, id), auditEvent(meta, "acquisition.channel.update", "采集通信通道", id))
 	if err == nil {
@@ -103,10 +109,14 @@ func (s *Service) CreateDevice(ctx context.Context, meta AuditMetadata, input De
 	if err := validateDevice(input); err != nil {
 		return Device{}, err
 	}
-	if _, err := s.store.FindChannel(ctx, input.ChannelID); err != nil {
+	channel, err := s.store.FindChannel(ctx, input.ChannelID)
+	if err != nil {
 		return Device{}, err
 	}
-	return s.createDevice(ctx, meta, input, 0)
+	if err := validateDeviceForProtocol(input, channel.Protocol); err != nil {
+		return Device{}, err
+	}
+	return s.createDevice(ctx, meta, input, channel.Protocol, 0)
 }
 
 func (s *Service) UpdateDevice(ctx context.Context, meta AuditMetadata, id int64, input DeviceInput) (Device, error) {
@@ -116,14 +126,29 @@ func (s *Service) UpdateDevice(ctx context.Context, meta AuditMetadata, id int64
 	if _, err := s.store.FindDevice(ctx, id); err != nil {
 		return Device{}, err
 	}
-	if _, err := s.store.FindChannel(ctx, input.ChannelID); err != nil {
+	channel, err := s.store.FindChannel(ctx, input.ChannelID)
+	if err != nil {
 		return Device{}, err
 	}
-	return s.createDevice(ctx, meta, input, id)
+	current, err := s.store.FindDevice(ctx, id)
+	if err != nil {
+		return Device{}, err
+	}
+	currentChannel, err := s.store.FindChannel(ctx, current.ChannelID)
+	if err != nil {
+		return Device{}, err
+	}
+	if currentChannel.Protocol != channel.Protocol {
+		return Device{}, fmt.Errorf("%w: %s -> %s", ErrCrossProtocolMove, currentChannel.Protocol, channel.Protocol)
+	}
+	if err := validateDeviceForProtocol(input, channel.Protocol); err != nil {
+		return Device{}, err
+	}
+	return s.createDevice(ctx, meta, input, channel.Protocol, id)
 }
 
-func (s *Service) createDevice(ctx context.Context, meta AuditMetadata, input DeviceInput, id int64) (Device, error) {
-	exists, err := s.store.SlaveExists(ctx, input.ChannelID, input.SlaveID, id)
+func (s *Service) createDevice(ctx context.Context, meta AuditMetadata, input DeviceInput, protocol string, id int64) (Device, error) {
+	exists, err := s.deviceAddressExists(ctx, input, protocol, id)
 	if err != nil {
 		return Device{}, err
 	}
@@ -164,24 +189,77 @@ type AuditEvent = audit.Event
 type AuditMetadata = audit.Metadata
 
 func validateChannel(input ChannelInput) error {
-	input.Parity = strings.ToUpper(strings.TrimSpace(input.Parity))
-	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Port) == "" || input.BaudRate <= 0 || (input.DataBits != 7 && input.DataBits != 8) || (input.StopBits != 1 && input.StopBits != 2) || (input.Parity != "N" && input.Parity != "E" && input.Parity != "O") || input.TimeoutMS <= 0 || input.InterRequestDelayMS < 0 || input.InterRequestDelayMS > 60000 || (input.Enabled != Enabled && input.Enabled != Disabled) {
+	if strings.TrimSpace(input.Name) == "" || !isSupportedProtocol(input.Protocol) || input.TimeoutMS <= 0 || input.InterRequestDelayMS < 0 || input.InterRequestDelayMS > 60000 || (input.Enabled != Enabled && input.Enabled != Disabled) {
 		return ErrInvalid
+	}
+	switch input.Protocol {
+	case ProtocolModbusRTU:
+		if input.SerialConfig == nil || !validSerialConfig(*input.SerialConfig) {
+			return ErrInvalid
+		}
+	default:
+		if input.SerialConfig != nil {
+			return ErrInvalid
+		}
 	}
 	return nil
 }
 
 func validateDevice(input DeviceInput) error {
-	if strings.TrimSpace(input.Name) == "" || input.DeviceType != DeviceTypeFeedProtector || input.ChannelID < 1 || input.SlaveID < 1 || input.SlaveID > 247 || input.PollIntervalMS <= 0 || input.FailureThreshold <= 0 || (input.Enabled != Enabled && input.Enabled != Disabled) {
-		if input.DeviceType != DeviceTypeFeedProtector {
-			return ErrUnsupportedDevice
-		}
+	if strings.TrimSpace(input.Name) == "" || input.ChannelID < 1 || input.PollIntervalMS <= 0 || input.FailureThreshold <= 0 || (input.Enabled != Enabled && input.Enabled != Disabled) {
 		return ErrInvalid
+	}
+	if input.DeviceType != DeviceTypeFeedProtector {
+		return ErrUnsupportedDevice
 	}
 	if err := validateRegisterBlocks(input.RegisterBlocks); err != nil {
 		return err
 	}
 	return nil
+}
+
+func validateDeviceForProtocol(input DeviceInput, protocol string) error {
+	if err := validateDevice(input); err != nil {
+		return err
+	}
+	switch protocol {
+	case ProtocolModbusRTU:
+		if input.UnitID < 1 || input.UnitID > 247 || input.NetworkEndpoint != nil {
+			return ErrInvalid
+		}
+	case ProtocolModbusRTUOverUDP:
+		if input.UnitID < 1 || input.UnitID > 247 || input.NetworkEndpoint == nil || !validNetworkEndpoint(*input.NetworkEndpoint) {
+			return ErrInvalid
+		}
+	case ProtocolModbusTCP, ProtocolModbusUDP:
+		if input.NetworkEndpoint == nil || !validNetworkEndpoint(*input.NetworkEndpoint) {
+			return ErrInvalid
+		}
+	default:
+		return ErrInvalid
+	}
+	return nil
+}
+
+func validSerialConfig(config SerialConfig) bool {
+	config.Parity = strings.ToUpper(strings.TrimSpace(config.Parity))
+	return strings.TrimSpace(config.Port) != "" && config.BaudRate > 0 &&
+		(config.DataBits == 7 || config.DataBits == 8) &&
+		(config.StopBits == 1 || config.StopBits == 2) &&
+		(config.Parity == "N" || config.Parity == "E" || config.Parity == "O")
+}
+
+func validNetworkEndpoint(endpoint NetworkEndpoint) bool {
+	return strings.TrimSpace(endpoint.Host) != "" && endpoint.Port >= 1 && endpoint.Port <= 65535
+}
+
+func isSupportedProtocol(protocol string) bool {
+	switch protocol {
+	case ProtocolModbusRTU, ProtocolModbusTCP, ProtocolModbusUDP, ProtocolModbusRTUOverUDP:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateRegisterBlocks(blocks []RegisterBlockInput) error {
@@ -228,7 +306,14 @@ type registerInterval struct {
 }
 
 func channelFrom(input ChannelInput, id int64) Channel {
-	return Channel{ID: id, Name: strings.TrimSpace(input.Name), Port: strings.TrimSpace(input.Port), BaudRate: input.BaudRate, DataBits: input.DataBits, StopBits: input.StopBits, Parity: strings.ToUpper(strings.TrimSpace(input.Parity)), TimeoutMS: input.TimeoutMS, InterRequestDelayMS: input.InterRequestDelayMS, Enabled: input.Enabled}
+	var serialConfig *SerialConfig
+	if input.SerialConfig != nil {
+		value := *input.SerialConfig
+		value.Port = strings.TrimSpace(value.Port)
+		value.Parity = strings.ToUpper(strings.TrimSpace(value.Parity))
+		serialConfig = &value
+	}
+	return Channel{ID: id, Name: strings.TrimSpace(input.Name), Protocol: input.Protocol, SerialConfig: serialConfig, TimeoutMS: input.TimeoutMS, InterRequestDelayMS: input.InterRequestDelayMS, Enabled: input.Enabled}
 }
 
 func deviceFrom(input DeviceInput, id int64) Device {
@@ -254,7 +339,23 @@ func deviceFrom(input DeviceInput, id int64) Device {
 			SortOrder:    sortOrder,
 		}
 	}
-	return Device{ID: id, Name: strings.TrimSpace(input.Name), DeviceType: input.DeviceType, ChannelID: input.ChannelID, SlaveID: input.SlaveID, PollIntervalMS: input.PollIntervalMS, FailureThreshold: input.FailureThreshold, Enabled: input.Enabled, RegisterBlocks: blocks}
+	var endpoint *NetworkEndpoint
+	if input.NetworkEndpoint != nil {
+		value := *input.NetworkEndpoint
+		value.Host = strings.TrimSpace(value.Host)
+		endpoint = &value
+	}
+	return Device{ID: id, Name: strings.TrimSpace(input.Name), DeviceType: strings.TrimSpace(input.DeviceType), ChannelID: input.ChannelID, UnitID: input.UnitID, NetworkEndpoint: endpoint, PollIntervalMS: input.PollIntervalMS, FailureThreshold: input.FailureThreshold, Enabled: input.Enabled, RegisterBlocks: blocks}
+}
+
+func (s *Service) deviceAddressExists(ctx context.Context, input DeviceInput, protocol string, excludeID int64) (bool, error) {
+	if protocol == ProtocolModbusRTU {
+		return s.store.UnitIDExists(ctx, input.ChannelID, input.UnitID, excludeID)
+	}
+	if input.NetworkEndpoint == nil {
+		return false, ErrInvalid
+	}
+	return s.store.NetworkEndpointExists(ctx, input.ChannelID, input.NetworkEndpoint.Host, input.NetworkEndpoint.Port, input.UnitID, excludeID)
 }
 
 func auditEvent(meta AuditMetadata, action, resource string, id int64) audit.Event {

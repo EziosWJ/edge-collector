@@ -5,59 +5,58 @@ source: edge-collector-api/internal/acquisition/protocol.go
 behavior:
   response_delay_ms: 0
 registers:
-  - name: voltage
-    description: 电压，工程值；线上 raw=3000
+  - name: raw_holding_0
+    description: 原始保持寄存器样例，地址 0
     area: holding_register
     address: 0
     type: uint16
     length: 1
-    value: 300
-    scale: 0.1
-    unit: V
+    value: 3000
     simulation: {type: fixed}
-  - name: current
+  - name: raw_holding_1
+    description: 原始保持寄存器样例，地址 1
     area: holding_register
     address: 1
     type: uint16
     length: 1
-    value: 12.5
-    scale: 0.1
-    unit: A
-  - name: activePower
-    description: 有功功率；工程单位在当前协议代码中未明确，不作厂家断言
+    value: 125
+  - name: raw_holding_2
+    description: 原始保持寄存器样例，地址 2
     area: holding_register
     address: 2
-    type: uint32
-    length: 2
-    byte_order: big
-    word_order: big
-    value: 123.4
-    scale: 0.1
-  - name: frequency
+    type: uint16
+    length: 1
+    value: 0
+  - name: raw_holding_3
+    description: 原始保持寄存器样例，地址 3
+    area: holding_register
+    address: 3
+    type: uint16
+    length: 1
+    value: 1234
+  - name: raw_holding_4
+    description: 原始保持寄存器样例，地址 4
     area: holding_register
     address: 4
     type: uint16
     length: 1
-    value: 50
-    scale: 0.01
-    unit: Hz
-  - name: powerFactor
+    value: 5000
+  - name: raw_holding_5
+    description: 原始保持寄存器样例，地址 5
     area: holding_register
     address: 5
     type: uint16
     length: 1
-    value: 0.98
-    scale: 0.001
-  - name: status
-    description: 原始状态字；0/1 不代表已确认正常/故障语义，bits 暂为空
+    value: 980
+  - name: raw_holding_6
+    description: 原始保持寄存器样例，地址 6
     area: holding_register
     address: 6
     type: uint16
     length: 1
     value: 0
-    bits: {}
-  - name: input_sample
-    description: FC04 原始输入寄存器样例
+  - name: raw_input_0
+    description: 原始输入寄存器样例，地址 0
     area: input_register
     address: 0
     type: uint16

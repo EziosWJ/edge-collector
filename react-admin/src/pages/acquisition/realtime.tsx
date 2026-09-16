@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { getAcquisitionStates } from "@/api/acquisition";
+import { getAcquisitionChannelStates, getAcquisitionStates } from "@/api/acquisition";
 import { ContentCard } from "@/components/common/content-card";
 import { DataTable } from "@/components/common/data-table";
 import { EmptyState } from "@/components/common/empty-state";
@@ -20,29 +20,26 @@ import { getErrorMessage } from "@/lib/api-error";
 import { formatDateTime } from "@/lib/datetime";
 import { formatRegisterValue, type RegisterDisplayMode } from "@/lib/register-format";
 import { cn } from "@/lib/utils";
+import {
+  acquisitionChannelRuntimeStatusMeta,
+  acquisitionCommunicationStatusMeta,
+} from "@/types";
 import type {
-  AcquisitionCommunicationStatus,
+  AcquisitionStatusMeta,
+  AcquisitionStatusTone,
+  AcquisitionChannelRuntimeState,
   AcquisitionCurrentState,
   AcquisitionRegisterBlockState,
   DataTableColumn,
 } from "@/types";
 
 type DisplayMode = RegisterDisplayMode;
-type StatusTone = "success" | "warning" | "error" | "neutral";
-type StatusMeta = { label: string; tone: StatusTone };
 
-const statusMeta: Record<AcquisitionCommunicationStatus, StatusMeta> = {
-  INITIAL: { label: "等待首次采集", tone: "neutral" },
-  ONLINE: { label: "在线", tone: "success" },
-  DEGRADED: { label: "部分失败", tone: "warning" },
-  OFFLINE: { label: "离线", tone: "error" },
-};
-
-function getStateStatusMeta(state: AcquisitionCurrentState): StatusMeta {
+function getStateStatusMeta(state: AcquisitionCurrentState): AcquisitionStatusMeta {
   if ((state.registerBlocks ?? []).length === 0) {
     return { label: "未配置读取块", tone: "warning" };
   }
-  return statusMeta[state.status];
+  return acquisitionCommunicationStatusMeta[state.status];
 }
 
 function formatOptionalTime(value?: string | null) {
@@ -52,6 +49,7 @@ function formatOptionalTime(value?: string | null) {
 
 export function AcquisitionRealtimePage() {
   const [states, setStates] = useState<AcquisitionCurrentState[]>([]);
+  const [channelStates, setChannelStates] = useState<AcquisitionChannelRuntimeState[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedID, setSelectedID] = useState<number | null>(null);
@@ -64,6 +62,12 @@ export function AcquisitionRealtimePage() {
       const payload = await getAcquisitionStates();
       const result = (Array.isArray(payload) ? payload : []).map(normalizeCurrentState);
       setStates(result);
+      try {
+        const channelPayload = await getAcquisitionChannelStates();
+        setChannelStates(Array.isArray(channelPayload) ? channelPayload : []);
+      } catch {
+        setChannelStates([]);
+      }
       setSelectedID((current) => {
         if (current !== null && result.some((state) => state.deviceId === current)) return current;
         return result[0]?.deviceId ?? null;
@@ -116,6 +120,8 @@ export function AcquisitionRealtimePage() {
           </div>
         }
       />
+
+      {channelStates.length > 0 && <ChannelStatusOverview states={channelStates} />}
 
       <div
         className="mb-space-6 grid min-w-0 grid-cols-2 gap-space-3 sm:grid-cols-3 lg:grid-cols-5"
@@ -184,6 +190,32 @@ function normalizeCurrentState(state: AcquisitionCurrentState): AcquisitionCurre
   };
 }
 
+function ChannelStatusOverview({ states }: { states: AcquisitionChannelRuntimeState[] }) {
+  return (
+    <ContentCard className="mb-space-6" title="通信通道运行状态" description="仅聚合启用设备状态；网络 endpoint 属于设备。">
+      <div className="grid gap-space-3 sm:grid-cols-2 xl:grid-cols-4">
+        {states.map((state) => {
+          const status = acquisitionChannelRuntimeStatusMeta[state.status];
+          return (
+            <div key={state.channelId} className="rounded-control border border-border bg-neutral-background px-space-3 py-space-3">
+              <div className="flex items-center justify-between gap-space-2">
+                <span className="truncate font-medium text-text-primary">{state.channelName || `通道 ${state.channelId}`}</span>
+                <StatusTag tone={status.tone}>{status.label}</StatusTag>
+              </div>
+              <div className="mt-1 text-xs text-text-tertiary">{state.protocol}</div>
+              <div className="mt-space-2 space-y-1 text-xs text-text-tertiary">
+                <div>最近尝试：{formatOptionalTime(state.lastAttemptAt)}</div>
+                <div>最近成功：{formatOptionalTime(state.lastSuccessAt)}</div>
+                {state.lastError && <div className="break-words text-error">最近错误：{state.lastError}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </ContentCard>
+  );
+}
+
 function SummaryCard({
   testId,
   icon,
@@ -195,7 +227,7 @@ function SummaryCard({
   icon: ReactNode;
   label: string;
   value: number;
-  tone?: StatusTone;
+  tone?: AcquisitionStatusTone;
 }) {
   const toneClass =
     tone === "success"
@@ -321,7 +353,8 @@ function DeviceNavigation({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-medium text-text-primary">{state.deviceName}</span>
                         <span className="mt-0.5 block truncate text-xs text-text-tertiary">
-                          通道 {state.channelId} · Slave #{state.slaveId}
+                          通道 {state.channelId} · Unit ID #{state.unitId}
+                          {state.networkEndpoint && ` · ${state.networkEndpoint.host}:${state.networkEndpoint.port}`}
                         </span>
                         <span className="mt-space-2 flex min-w-0 flex-wrap items-center gap-x-space-2 gap-y-1">
                           <StatusTag tone={status.tone}>{status.label}</StatusTag>
@@ -351,7 +384,7 @@ function DeviceNavigationMessage({ title, description }: { title: string; descri
   );
 }
 
-function getStatusDotClass(tone: StatusTone) {
+function getStatusDotClass(tone: AcquisitionStatusTone) {
   if (tone === "success") return "bg-success";
   if (tone === "warning") return "bg-warning";
   if (tone === "error") return "bg-error";
@@ -382,7 +415,7 @@ export function StateDetail({
   return (
     <ContentCard
       title={<span data-testid="state-detail-title">{state.deviceName}</span>}
-      description={`通道 ${state.channelId} · Modbus Slave #${state.slaveId}`}
+      description={`通道 ${state.channelId} · Modbus Unit ID #${state.unitId}${state.networkEndpoint ? ` · ${state.networkEndpoint.host}:${state.networkEndpoint.port}` : ""}`}
       extra={<StatusTag tone={status.tone}>{status.label}</StatusTag>}
       className="min-w-0 overflow-hidden"
       bodyClassName="p-0"

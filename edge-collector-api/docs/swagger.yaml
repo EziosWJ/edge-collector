@@ -10,22 +10,16 @@ definitions:
     type: object
   acquisition.channelRequest:
     properties:
-      baudRate:
-        type: integer
-      dataBits:
-        type: integer
       enabled:
         type: integer
       interRequestDelayMs:
         type: integer
       name:
         type: string
-      parity:
+      protocol:
         type: string
-      port:
-        type: string
-      stopBits:
-        type: integer
+      serialConfig:
+        $ref: '#/definitions/acquisition.serialConfigRequest'
       timeoutMs:
         type: integer
     type: object
@@ -41,13 +35,22 @@ definitions:
         type: integer
       name:
         type: string
+      networkEndpoint:
+        $ref: '#/definitions/acquisition.networkEndpointRequest'
       pollIntervalMs:
         type: integer
       registerBlocks:
         items:
           $ref: '#/definitions/acquisition.registerBlockRequest'
         type: array
-      slaveId:
+      unitId:
+        type: integer
+    type: object
+  acquisition.networkEndpointRequest:
+    properties:
+      host:
+        type: string
+      port:
         type: integer
     type: object
   acquisition.registerBlockRequest:
@@ -63,6 +66,19 @@ definitions:
       sortOrder:
         type: integer
       startAddress:
+        type: integer
+    type: object
+  acquisition.serialConfigRequest:
+    properties:
+      baudRate:
+        type: integer
+      dataBits:
+        type: integer
+      parity:
+        type: string
+      port:
+        type: string
+      stopBits:
         type: integer
     type: object
   auth.LoginResult:
@@ -2813,6 +2829,18 @@ paths:
       summary: 用户分页
       tags:
       - 用户管理
+  /api/v1/acquisition/channel-state:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/acquisition.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 通信通道运行状态列表
+      tags:
+      - 设备采集
   /api/v1/acquisition/channels:
     get:
       parameters:
@@ -2831,7 +2859,7 @@ paths:
             $ref: '#/definitions/acquisition.ApiEnvelope'
       security:
       - BearerAuth: []
-      summary: RS485 通道分页
+      summary: Modbus 通道分页
       tags:
       - 设备采集
     post:
@@ -2849,7 +2877,7 @@ paths:
             $ref: '#/definitions/acquisition.ApiEnvelope'
       security:
       - BearerAuth: []
-      summary: 新建 RS485 通道
+      summary: 新建 Modbus 通道
       tags:
       - 设备采集
   /api/v1/acquisition/channels/{id}:
@@ -2867,7 +2895,7 @@ paths:
             $ref: '#/definitions/acquisition.ApiEnvelope'
       security:
       - BearerAuth: []
-      summary: 删除 RS485 通道
+      summary: 删除 Modbus 通道
       tags:
       - 设备采集
     get:
@@ -2884,7 +2912,7 @@ paths:
             $ref: '#/definitions/acquisition.ApiEnvelope'
       security:
       - BearerAuth: []
-      summary: RS485 通道详情
+      summary: Modbus 通道详情
       tags:
       - 设备采集
     put:
@@ -2907,7 +2935,7 @@ paths:
             $ref: '#/definitions/acquisition.ApiEnvelope'
       security:
       - BearerAuth: []
-      summary: 修改 RS485 通道
+      summary: 修改 Modbus 通道
       tags:
       - 设备采集
   /api/v1/acquisition/devices:

@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import {
   createAcquisitionChannel,
@@ -27,18 +27,35 @@ import type {
   AcquisitionChannel,
   AcquisitionChannelInput,
   DataTableColumn,
+  AcquisitionProtocol,
 } from "@/types";
 
-const channelSchema = z.object({
-  name: z.string().trim().min(1, "通道名称不能为空").max(100, "通道名称不能超过 100 个字符"),
+const protocolOptions: Array<{ value: AcquisitionProtocol; label: string }> = [
+  { value: "MODBUS_RTU", label: "Modbus RTU" },
+  { value: "MODBUS_TCP", label: "Modbus TCP" },
+  { value: "MODBUS_UDP", label: "Modbus UDP（MBAP）" },
+  { value: "MODBUS_RTU_OVER_UDP", label: "Modbus RTU over UDP" },
+];
+
+const serialConfigSchema = z.object({
   port: z.string().trim().min(1, "串口设备不能为空").max(255, "串口设备不能超过 255 个字符"),
   baudRate: z.coerce.number().int().positive("波特率必须大于 0"),
   dataBits: z.coerce.number().pipe(z.union([z.literal(7), z.literal(8)])),
   stopBits: z.coerce.number().pipe(z.union([z.literal(1), z.literal(2)])),
   parity: z.enum(["N", "E", "O"]),
+});
+
+const channelSchema = z.object({
+  name: z.string().trim().min(1, "通道名称不能为空").max(100, "通道名称不能超过 100 个字符"),
+  protocol: z.enum(["MODBUS_RTU", "MODBUS_TCP", "MODBUS_UDP", "MODBUS_RTU_OVER_UDP"]),
+  serialConfig: serialConfigSchema.optional(),
   timeoutMs: z.coerce.number().int().positive("通信超时必须大于 0"),
   interRequestDelayMs: z.coerce.number().int().min(0, "报文间隔延迟不能小于 0").max(60000, "报文间隔延迟不能超过 60000 毫秒"),
   enabled: z.coerce.number().pipe(z.union([z.literal(0), z.literal(1)])),
+}).superRefine((value, context) => {
+  if (value.protocol === "MODBUS_RTU" && !value.serialConfig) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["serialConfig"], message: "Modbus RTU 必须配置串口参数" });
+  }
 });
 
 type ChannelFormValues = z.infer<typeof channelSchema>;
@@ -46,11 +63,8 @@ type ConfirmState = AcquisitionChannel | null;
 
 const emptyValues: ChannelFormValues = {
   name: "",
-  port: "",
-  baudRate: 19200,
-  dataBits: 8,
-  stopBits: 2,
-  parity: "N",
+  protocol: "MODBUS_RTU",
+  serialConfig: { port: "", baudRate: 19200, dataBits: 8, stopBits: 2, parity: "N" },
   timeoutMs: 300,
   interRequestDelayMs: 0,
   enabled: 1,
@@ -58,13 +72,18 @@ const emptyValues: ChannelFormValues = {
 
 function toFormValues(channel?: AcquisitionChannel): ChannelFormValues {
   return channel
-    ? {
+      ? {
         name: channel.name,
-        port: channel.port,
-        baudRate: channel.baudRate,
-        dataBits: channel.dataBits as 7 | 8,
-        stopBits: channel.stopBits as 1 | 2,
-        parity: channel.parity,
+        protocol: channel.protocol,
+        serialConfig: channel.serialConfig
+          ? {
+              port: channel.serialConfig.port,
+              baudRate: channel.serialConfig.baudRate,
+              dataBits: channel.serialConfig.dataBits as 7 | 8,
+              stopBits: channel.serialConfig.stopBits as 1 | 2,
+              parity: channel.serialConfig.parity,
+            }
+          : emptyValues.serialConfig,
         timeoutMs: channel.timeoutMs,
         interRequestDelayMs: channel.interRequestDelayMs,
         enabled: channel.enabled,
@@ -73,7 +92,13 @@ function toFormValues(channel?: AcquisitionChannel): ChannelFormValues {
 }
 
 function toPayload(values: ChannelFormValues): AcquisitionChannelInput {
-  return values;
+  return values.protocol === "MODBUS_RTU"
+    ? values
+    : { ...values, serialConfig: undefined };
+}
+
+function protocolLabel(protocol: AcquisitionProtocol) {
+  return protocolOptions.find((option) => option.value === protocol)?.label ?? protocol;
 }
 
 export function AcquisitionChannelsPage() {
@@ -150,12 +175,19 @@ export function AcquisitionChannelsPage() {
         </div>
       ),
     },
-    { title: "串口设备", dataIndex: "port", width: 220 },
     {
-      title: "串口参数",
-      key: "serial",
+      title: "协议",
+      dataIndex: "protocol",
+      width: 180,
+      render: (value) => protocolLabel(value as AcquisitionProtocol),
+    },
+    {
+      title: "端点/串口",
+      key: "endpoint",
       width: 260,
-      render: (_, channel) => `${channel.baudRate} · ${channel.dataBits}${channel.parity}${channel.stopBits}`,
+      render: (_, channel) => channel.serialConfig
+        ? `${channel.serialConfig.port} · ${channel.serialConfig.baudRate} ${channel.serialConfig.dataBits}${channel.serialConfig.parity}${channel.serialConfig.stopBits}`
+        : "设备级网络端点",
     },
     {
       title: "超时",
@@ -199,7 +231,7 @@ export function AcquisitionChannelsPage() {
     <>
       <PageHeader
         title="通信通道"
-        description="维护 RS485 串口参数与报文间隔。配置保存后由运行中的采集器刷新。"
+        description="维护 Modbus 传输协议与公共调度参数。配置保存后由运行中的采集器刷新。"
         actions={
           <Button variant="primary" onClick={() => openForm()}>
             <Plus className="h-4 w-4" aria-hidden />
@@ -210,7 +242,7 @@ export function AcquisitionChannelsPage() {
       <DataTableCard
         toolbar={
           <div className="flex items-center justify-between border-b border-border px-card py-space-3">
-            <span className="text-sm text-text-secondary">RS485 / Modbus RTU</span>
+            <span className="text-sm text-text-secondary">Modbus RTU / TCP / UDP</span>
             <Button size="sm" variant="secondary" onClick={list.reload} disabled={list.loading}>
               <RefreshCw className="h-4 w-4" aria-hidden />
               刷新
@@ -233,12 +265,12 @@ export function AcquisitionChannelsPage() {
       <FormDialog
         open={formOpen}
         title={editing ? "编辑通信通道" : "新建通信通道"}
-        description="RS485 通道使用 8 个数据位和常见串口校验配置。"
+        description="协议创建后不可修改；网络协议的 endpoint 配置在设备上。"
         loading={submitting}
         onCancel={() => setFormOpen(false)}
         onSubmit={() => void form.handleSubmit(submit)()}
       >
-        <ChannelForm form={form} loading={submitting} />
+        <ChannelForm form={form} loading={submitting} editing={Boolean(editing)} />
       </FormDialog>
       <ConfirmDialog
         open={Boolean(confirm)}
@@ -254,34 +286,43 @@ export function AcquisitionChannelsPage() {
   );
 }
 
-function ChannelForm({ form, loading }: { form: ReturnType<typeof useForm<ChannelFormValues>>; loading: boolean }) {
-  const { register, formState: { errors } } = form;
+function ChannelForm({ form, loading, editing }: { form: ReturnType<typeof useForm<ChannelFormValues>>; loading: boolean; editing: boolean }) {
+  const { register, control, formState: { errors } } = form;
+  const protocol = useWatch({ control, name: "protocol" });
+  const isRTU = protocol === "MODBUS_RTU";
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <Field label="通道名称" required error={errors.name?.message}>
         <Input {...register("name")} placeholder="例如：一号馈电柜" disabled={loading} />
       </Field>
-      <Field label="串口设备" required error={errors.port?.message} help="开发机可填写虚拟串口或 PTY 路径。">
-        <Input {...register("port")} placeholder="例如：/dev/ttyUSB0" disabled={loading} />
-      </Field>
-      <Field label="波特率" required error={errors.baudRate?.message}>
-        <Input {...register("baudRate", { valueAsNumber: true })} type="number" min={1} disabled={loading} />
-      </Field>
-      <Field label="数据位" required error={errors.dataBits?.message}>
-        <Select {...register("dataBits", { valueAsNumber: true })} disabled={loading}>
-          <option value="7">7</option><option value="8">8</option>
+      <Field label="协议" required error={errors.protocol?.message} help="协议创建后不可修改。">
+        <Select {...register("protocol")} disabled={loading || editing}>
+          {protocolOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </Select>
       </Field>
-      <Field label="停止位" required error={errors.stopBits?.message}>
-        <Select {...register("stopBits", { valueAsNumber: true })} disabled={loading}>
-          <option value="1">1</option><option value="2">2</option>
-        </Select>
-      </Field>
-      <Field label="校验方式" required error={errors.parity?.message}>
-        <Select {...register("parity")} disabled={loading}>
-          <option value="N">无校验</option><option value="E">偶校验</option><option value="O">奇校验</option>
-        </Select>
-      </Field>
+      {isRTU && <>
+        <Field label="串口设备" required error={errors.serialConfig?.port?.message} help="开发机可填写虚拟串口或 PTY 路径。">
+          <Input {...register("serialConfig.port")} placeholder="例如：/dev/ttyUSB0" disabled={loading} />
+        </Field>
+        <Field label="波特率" required error={errors.serialConfig?.baudRate?.message}>
+          <Input {...register("serialConfig.baudRate", { valueAsNumber: true })} type="number" min={1} disabled={loading} />
+        </Field>
+        <Field label="数据位" required error={errors.serialConfig?.dataBits?.message}>
+          <Select {...register("serialConfig.dataBits", { valueAsNumber: true })} disabled={loading}>
+            <option value="7">7</option><option value="8">8</option>
+          </Select>
+        </Field>
+        <Field label="停止位" required error={errors.serialConfig?.stopBits?.message}>
+          <Select {...register("serialConfig.stopBits", { valueAsNumber: true })} disabled={loading}>
+            <option value="1">1</option><option value="2">2</option>
+          </Select>
+        </Field>
+        <Field label="校验方式" required error={errors.serialConfig?.parity?.message}>
+          <Select {...register("serialConfig.parity")} disabled={loading}>
+            <option value="N">无校验</option><option value="E">偶校验</option><option value="O">奇校验</option>
+          </Select>
+        </Field>
+      </>}
       <Field label="通信超时（毫秒）" required error={errors.timeoutMs?.message}>
         <Input {...register("timeoutMs", { valueAsNumber: true })} type="number" min={1} disabled={loading} />
       </Field>

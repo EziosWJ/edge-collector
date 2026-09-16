@@ -2,6 +2,17 @@
 
 > 本文件前半部分记录 2026-09-14 的模拟器历史验收。ADR-0014 后，Go 采集链路改为读取配置驱动的原始 FC03/FC04 寄存器；以下“真实 Go 采集链路”说明已同步为当前 smoke 契约。
 
+## ADR-0015 实现阶段验证（2026-09-16）
+
+- `task backend:check`：通过。
+- `task db:integration:sqlite`：通过，包含旧 RTU 数据迁移保留、四协议 API 模型、endpoint 唯一性、Unit ID 范围和跨协议迁移拒绝。
+- `task frontend:lint` / `task frontend:build`：通过。
+- `uv run python -m unittest discover -s tests -v`：通过。
+- `uv run python scripts/go_smoke.py`：通过；真实 acquisition session 与 Runtime 已验证 RTU、Modbus TCP、MBAP over UDP、RTU over UDP，四协议 Runtime 并行运行互不阻塞，TCP 不可达 endpoint 可隔离并在热更新 endpoint 后恢复，网络同通道不同 endpoint 可使用相同 Unit ID。
+- `task db:integration:postgres`：通过，包含 PostgreSQL 全量迁移、Repository/API 及 ADR-0015 transport migration 契约。
+
+以上是模块、SQLite/API 和 simulator 验证；没有把它们表述为已完成的真实厂家设备验收。
+
 日期：2026-09-14。环境：Linux，uv 0.11.7，uv 项目 Python 3.12.13，PyModbus 3.15.0，PyYAML 6.0.3。
 
 ## 依赖与配置
@@ -74,11 +85,11 @@ OK
 - 同总线第二台继续 `ONLINE`；恢复第一台 Slave=1 后回到 `ONLINE`。
 - RTU1 Slave 1 同样完整读取成功。
 
-当前 Go smoke 按读取块配置同时使用 FC03 和 FC04；本节其余网络客户端结果仍是客户端库级别传输验证。
+当前 Go smoke 按读取块配置同时使用 FC03 和 FC04；TCP、MBAP over UDP、RTU over UDP 也通过真实 Runtime 使用同一读取块和状态聚合链路。
 
 ## 真实 Go 网络客户端
 
-使用项目现有 `simonvetter/modbus v1.6.4`，每种模式读取 Unit 1、2，FC03，地址0，数量7：
+使用项目现有 `simonvetter/modbus v1.6.4`，每种模式读取两个不同 endpoint 的 Unit 1，并通过 Runtime 验证通道状态：
 
 ```text
 PASS Go library tcp://127.0.0.1:1502 unit=1 registers=[3000 125 0 1234 5000 980 0]
@@ -90,12 +101,12 @@ PASS Go library rtuoverudp://127.0.0.1:1700 unit=2 registers=[3100 125 0 1234 50
 ALL GO SMOKE CHECKS PASSED
 ```
 
-实际 RTU over UDP 请求 `01 03 00 00 00 07 04 08`，响应末尾 CRC `84 F4`，完整帧记录在 README；Go 客户端及 Python socket 测试均验证了 CRC。该网络客户端检查不等同于业务采集 API 的网络模式接入。
+实际 RTU over UDP 请求 `01 03 00 00 00 07 04 08`，响应末尾 CRC `84 F4`，完整帧记录在 README；Go acquisition session、Runtime 及 Python socket 测试均验证了 CRC 和读取结果。
 
 ## 没有完成或不能确认的内容
 
-- 未启动完整 `cmd/api`、数据库和浏览器端到端链路，本次直接执行真实采集模块。没有修改用户现有持久设备配置。
-- 后端目前没有 TCP/UDP/RTU over UDP 业务采集接入，因此网络验收是现用 Go 客户端库级别，不是业务 API 配置验证。
+- 2026-09-14 历史记录未启动完整 `cmd/api`、数据库和浏览器端到端链路；2026-09-16 已补充 SQLite/API transport 契约验证和四协议真实 acquisition smoke，但没有修改用户现有持久设备配置。
+- 仍未完成真实厂家设备验收；网络 smoke 通过实际 acquisition session 和 simulator 端点验证，不替代现场设备测试。
 - 无厂家寄存器表，无法验证真实馈电硬件、高开保护器、告警地址、status bit 的厂家语义。
 - 无热加载、drop_rate、广播写、BCD/String 或物理 RS485 电气/时序模拟；详见 README。
 - 以上历史记录生成时未改后端实现；ADR-0014 后端/前端检查由仓库根目录 Taskfile 单独执行。

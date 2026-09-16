@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useFieldArray, useForm } from "react-hook-form";
+import { useFieldArray, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import {
   createAcquisitionDevice,
@@ -32,11 +32,17 @@ import type {
   DataTableColumn,
 } from "@/types";
 
+const networkEndpointSchema = z.object({
+  host: z.string().trim().max(255, "主机地址不能超过 255 个字符"),
+  port: z.coerce.number().int().min(1, "端口范围为 1～65535").max(65535, "端口范围为 1～65535"),
+});
+
 const deviceSchema = z.object({
   name: z.string().trim().min(1, "设备名称不能为空").max(100, "设备名称不能超过 100 个字符"),
   deviceType: z.literal("FEED_PROTECTOR"),
   channelId: z.coerce.number().int().positive("请选择通信通道"),
-  slaveId: z.coerce.number().int().min(1, "地址范围为 1～247").max(247, "地址范围为 1～247"),
+  unitId: z.coerce.number().int().min(0, "Unit ID 范围为 0～255").max(255, "Unit ID 范围为 0～255"),
+  networkEndpoint: networkEndpointSchema.optional(),
   pollIntervalMs: z.coerce.number().int().positive("采集周期必须大于 0"),
   failureThreshold: z.coerce.number().int().positive("离线阈值必须大于 0"),
   enabled: z.coerce.number().pipe(z.union([z.literal(0), z.literal(1)])),
@@ -82,7 +88,8 @@ const emptyValues: DeviceFormValues = {
   name: "",
   deviceType: "FEED_PROTECTOR",
   channelId: 0,
-  slaveId: 1,
+  unitId: 1,
+  networkEndpoint: { host: "", port: 502 },
   pollIntervalMs: 1000,
   failureThreshold: 3,
   enabled: 1,
@@ -95,7 +102,8 @@ function toFormValues(device?: AcquisitionDevice): DeviceFormValues {
         name: device.name,
         deviceType: device.deviceType,
         channelId: device.channelId,
-        slaveId: device.slaveId,
+        unitId: device.unitId,
+        networkEndpoint: device.networkEndpoint ?? emptyValues.networkEndpoint,
         pollIntervalMs: device.pollIntervalMs,
         failureThreshold: device.failureThreshold,
         enabled: device.enabled,
@@ -111,9 +119,13 @@ function toFormValues(device?: AcquisitionDevice): DeviceFormValues {
     : emptyValues;
 }
 
-function toPayload(values: DeviceFormValues): AcquisitionDeviceInput {
+function toPayload(values: DeviceFormValues, network: boolean): AcquisitionDeviceInput {
   return {
     ...values,
+    networkEndpoint: network ? {
+      host: values.networkEndpoint?.host.trim() ?? "",
+      port: values.networkEndpoint?.port ?? 0,
+    } : undefined,
     registerBlocks: values.registerBlocks.map((block, index) => ({
       ...block,
       functionCode: block.functionCode as 3 | 4,
@@ -172,13 +184,27 @@ export function AcquisitionDevicesPage() {
   };
 
   const submit = async (values: DeviceFormValues) => {
+    const channel = channels.find((item) => item.id === values.channelId);
+    const network = channel?.protocol !== "MODBUS_RTU";
+    if (!channel) {
+      form.setError("channelId", { type: "validate", message: "请选择通信通道" });
+      return;
+    }
+    if (network && (!values.networkEndpoint?.host.trim() || !values.networkEndpoint.port)) {
+      form.setError("networkEndpoint.host", { type: "validate", message: "网络设备必须配置 host" });
+      return;
+    }
+    if (!network && (values.unitId < 1 || values.unitId > 247)) {
+      form.setError("unitId", { type: "validate", message: "Modbus RTU Unit ID 范围为 1～247" });
+      return;
+    }
     setSubmitting(true);
     try {
       if (editing) {
-        await updateAcquisitionDevice(editing.id, toPayload(values));
+        await updateAcquisitionDevice(editing.id, toPayload(values, network));
         toast.success("设备已更新，后续采集周期生效");
       } else {
-        await createAcquisitionDevice(toPayload(values));
+        await createAcquisitionDevice(toPayload(values, network));
         toast.success("设备已创建，后续采集周期生效");
       }
       setFormOpen(false);
@@ -205,7 +231,10 @@ export function AcquisitionDevicesPage() {
     }
   };
 
-  const channelName = (id: number) => channels.find((channel) => channel.id === id)?.name ?? `通道 ${id}`;
+  const channelName = (id: number) => {
+    const channel = channels.find((item) => item.id === id);
+    return channel ? `${channel.name} · ${channel.protocol}` : `通道 ${id}`;
+  };
   const columns: DataTableColumn<AcquisitionDevice>[] = [
     {
       title: "设备",
@@ -219,7 +248,7 @@ export function AcquisitionDevicesPage() {
       ),
     },
     { title: "通信通道", key: "channel", width: 180, render: (_, device) => channelName(device.channelId) },
-    { title: "Slave 地址", dataIndex: "slaveId", width: 120, render: (value) => `#${value}` },
+    { title: "Unit ID", dataIndex: "unitId", width: 100, render: (value) => `#${value}` },
     { title: "采集周期", dataIndex: "pollIntervalMs", width: 120, render: (value) => `${value} ms` },
     { title: "离线阈值", dataIndex: "failureThreshold", width: 110, render: (value) => `${value} 次` },
     {
@@ -283,8 +312,8 @@ export function AcquisitionDevicesPage() {
           >
             <option value="">全部通道</option>
             {channels.map((channel) => (
-              <option key={channel.id} value={channel.id}>
-                {channel.name}（{channel.port}）
+                <option key={channel.id} value={channel.id}>
+                {channel.name}（{channel.protocol}）
               </option>
             ))}
           </Select>
@@ -349,6 +378,12 @@ function DeviceForm({
   loading: boolean;
 }) {
   const { register, control, formState: { errors } } = form;
+  const channelId = useWatch({ control, name: "channelId" });
+  const selectedChannel = channels.find((channel) => channel.id === channelId);
+  const isNetwork = selectedChannel != null && selectedChannel.protocol !== "MODBUS_RTU";
+  const unitHelp = selectedChannel?.protocol === "MODBUS_RTU"
+    ? "Modbus RTU 地址范围为 1～247。"
+    : "网络协议地址范围为 0～255。"
   const blocks = useFieldArray({ control, name: "registerBlocks" });
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -363,12 +398,20 @@ function DeviceForm({
       <Field label="通信通道" required error={errors.channelId?.message} help={channelsLoading ? "通道加载中..." : undefined}>
         <Select {...register("channelId", { valueAsNumber: true })} disabled={loading || channelsLoading}>
           <option value="0">请选择通信通道</option>
-          {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}（{channel.port}）</option>)}
+          {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}（{channel.protocol}）</option>)}
         </Select>
       </Field>
-      <Field label="Modbus Slave 地址" required error={errors.slaveId?.message}>
-        <Input {...register("slaveId", { valueAsNumber: true })} type="number" min={1} max={247} disabled={loading} />
+      <Field label="Modbus Unit ID" required error={errors.unitId?.message} help={unitHelp}>
+        <Input {...register("unitId", { valueAsNumber: true })} type="number" min={isNetwork ? 0 : 1} max={isNetwork ? 255 : 247} disabled={loading} />
       </Field>
+      {isNetwork && <>
+        <Field label="网络主机" required error={errors.networkEndpoint?.host?.message} help="支持 IPv4、IPv6 和 hostname。">
+          <Input {...register("networkEndpoint.host")} placeholder="例如：192.168.1.10" disabled={loading} />
+        </Field>
+        <Field label="网络端口" required error={errors.networkEndpoint?.port?.message}>
+          <Input {...register("networkEndpoint.port", { valueAsNumber: true })} type="number" min={1} max={65535} disabled={loading} />
+        </Field>
+      </>}
       <Field label="采集周期（毫秒）" required error={errors.pollIntervalMs?.message}>
         <Input {...register("pollIntervalMs", { valueAsNumber: true })} type="number" min={1} disabled={loading} />
       </Field>

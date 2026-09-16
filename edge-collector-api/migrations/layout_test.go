@@ -48,7 +48,7 @@ func TestSchemaAndSeedResponsibilitiesStaySeparate(t *testing.T) {
 	for _, dialect := range []string{"postgres", "sqlite"} {
 		for _, name := range migrationFiles(t, dialectPath(dialect, "schema")) {
 			contents := readFile(t, name)
-			if schemaDML.Match(contents) {
+			if schemaDML.Match(contents) && !strings.Contains(string(contents), "-- +edge-collector data migration") {
 				t.Errorf("schema migration %s contains seed-data DML", name)
 			}
 		}
