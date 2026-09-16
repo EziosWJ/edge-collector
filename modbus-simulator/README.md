@@ -43,7 +43,7 @@ ADR-0015 的完整验收使用 `config/adr0015-e2e.yaml`，它为 TCP、MBAP UDP
 
 ADR-0016 的 ZNCK-I 动态事务夹具位于 `config/znck-i-fixture.yaml`，设备使用 Unit 1。它把 `8166` 作为可写的初始零值 raw 故障码，`8120` 作为查询索引；成功写入 FC16 `8120=0` 后，FC03 读取 `8121..8137` 会返回固定 raw 详情。测试可以直接使用 `modbus_simulator.fixtures.ZnckIFixture`，其 `journal.requests`、`journal.writes` 和 `journal.exceptions` 用于断言请求顺序及异常，不需要启动 socket。
 
-真实采集 runtime 的 RTU + TCP 验收使用 `config/znck-i-runtime-e2e.yaml` 和 `npm run test:znck-i-runtime-e2e`（根任务为 `task e2e:znck-i`）。通道的 `fixture_options.initial_fault_code` 仅用于让 E2E 从 `8166=7` 开始；它不改变 fixture 的通用默认值。测试从 API runtime state 和 simulator 请求日志共同断言 `FC16 8120=0 → 50ms → FC03 8121..8137` 及同码抑制。
+真实采集 runtime 的 RTU + TCP 验收使用 `config/znck-i-runtime-e2e.yaml` 和 `npm run test:znck-i-runtime-e2e`（根任务为 `task e2e:znck-i`）。通道的 `fixture_options.initial_fault_code` 与 `fault_code_sequence: [7, 0, 7]` 让 E2E 覆盖恢复再发生；它们不改变 fixture 的通用默认值。测试从 API runtime state 和 simulator 请求日志共同断言 `FC16 8120=0 → 50ms → FC03 8121..8137`、同码抑制以及 `7→0→7` 后动态 FC16/FC03 再次触发。
 
 ## 配置与设备映射
 

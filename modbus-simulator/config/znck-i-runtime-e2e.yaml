@@ -12,6 +12,7 @@ channels:
     stopbits: 1
     fixture_options:
       initial_fault_code: 7
+      fault_code_sequence: [7, 0, 7]
     devices:
       - devices/znck_i.yaml
 
@@ -21,5 +22,6 @@ channels:
     port: 1516
     fixture_options:
       initial_fault_code: 7
+      fault_code_sequence: [7, 0, 7]
     devices:
       - devices/znck_i.yaml

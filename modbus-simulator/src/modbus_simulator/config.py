@@ -127,10 +127,16 @@ def load_config(path):
                 raise ValueError('监听地址重复')
             endpoints.add(endpoint)
         fixture_options = mapping(channel.get('fixture_options', {}), 'fixture_options')
-        if set(fixture_options) - {'initial_fault_code'}:
-            raise ValueError('fixture_options 当前仅支持 initial_fault_code')
+        if set(fixture_options) - {'initial_fault_code', 'fault_code_sequence'}:
+            raise ValueError('fixture_options 当前仅支持 initial_fault_code、fault_code_sequence')
         if 'initial_fault_code' in fixture_options:
             integer(fixture_options['initial_fault_code'], 0, 65535, 'initial_fault_code')
+        if 'fault_code_sequence' in fixture_options:
+            sequence = fixture_options['fault_code_sequence']
+            if not isinstance(sequence, list) or not sequence:
+                raise ValueError('fault_code_sequence 必须为非空列表')
+            for index, value in enumerate(sequence):
+                integer(value, 0, 65535, f'fault_code_sequence[{index}]')
         files = channel.get('devices')
         if not isinstance(files, list) or not files:
             raise ValueError('channel.devices 必须是非空文件列表')

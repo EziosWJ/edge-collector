@@ -147,15 +147,18 @@ function assertZnckSequence(simulator, channel) {
   assert.ok(writeIndex >= 0, `${channel}: FC16 8120 write missing\n${lines.join("\n")}`);
   assert.ok(detailIndex >= 0, `${channel}: detail 8121..8137 read missing\n${lines.join("\n")}`);
   assert.ok(staticIndex < writeIndex && writeIndex < detailIndex, `${channel}: request order invalid\n${lines.join("\n")}`);
-  assert.equal(lines.filter((line) => /function=10 address=8120 count=1/.test(line)).length, 1, `${channel}: same fault retriggered`);
-  assert.equal(lines.filter((line) => /function=03 address=8121 count=17/.test(line)).length, 1, `${channel}: detail query repeated`);
+  assert.equal(lines.filter((line) => /function=10 address=8120 count=1/.test(line)).length, 2, `${channel}: 7→0→7 did not trigger FC16 twice`);
+  assert.equal(lines.filter((line) => /function=03 address=8121 count=17/.test(line)).length, 2, `${channel}: 7→0→7 did not trigger FC03 twice`);
 }
 
 const source = `def after_poll(ctx):
     code = ctx.raw_register(3, 8166)
-    if code == None or code == 0:
+    if code == None:
         return
     previous = ctx.state_get("fault_code")
+    if code == 0:
+        ctx.state_set("fault_code", 0)
+        return
     if previous == code:
         return
     ctx.write_registers(8120, [0])

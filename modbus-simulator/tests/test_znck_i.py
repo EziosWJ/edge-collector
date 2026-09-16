@@ -95,6 +95,14 @@ class ZnckIFixtureTest(unittest.IsolatedAsyncioTestCase):
             [(1,), (1,), (2,), (0,), (1,)],
         )
 
+    async def test_fault_code_sequence_advances_on_static_reads(self):
+        fixture = ZnckIFixture(fault_code_sequence=(7, 0, 7))
+
+        self.assertEqual(await fixture.read_fault_code(), [7])
+        self.assertEqual(await fixture.read_fault_code(), [0])
+        self.assertEqual(await fixture.read_fault_code(), [7])
+        self.assertEqual(await fixture.read_fault_code(), [7])
+
     async def test_protocol_records_static_then_dynamic_sequence(self):
         for rtu in (False, True):
             with self.subTest(rtu=rtu):
@@ -171,6 +179,7 @@ class ZnckIFixtureTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(config['channels']), 2)
         for channel in config['channels']:
             self.assertEqual(channel['fixture_options']['initial_fault_code'], 7)
+            self.assertEqual(channel['fixture_options']['fault_code_sequence'], [7, 0, 7])
             store = make_datastore(channel['devices'], fixture_options=channel['fixture_options'])
             self.assertIsInstance(store, ZnckIFixture)
             self.assertEqual(store.devices[UNIT_ID].config['registers'][-1]['value'], 7)

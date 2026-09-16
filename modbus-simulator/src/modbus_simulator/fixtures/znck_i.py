@@ -70,7 +70,8 @@ class ZnckIFixture(Datastore):
     ``journal`` inherited from :class:`Datastore`.
     """
 
-    def __init__(self, *, journal=None, config=None, detail_values=None):
+    def __init__(self, *, journal=None, config=None, detail_values=None,
+                 fault_code_sequence=None):
         if config is None:
             config = znck_i_device_config()
         else:
@@ -82,9 +83,28 @@ class ZnckIFixture(Datastore):
                 type(value) is not int or not 0 <= value <= 65535
                 for value in detail_values):
             raise ValueError(f'detail_values 必须是 {DETAIL_QUANTITY} 个 uint16')
+        if fault_code_sequence is not None:
+            if not fault_code_sequence or any(
+                    type(value) is not int or not 0 <= value <= 65535
+                    for value in fault_code_sequence):
+                raise ValueError('fault_code_sequence 必须为非空 uint16 序列')
+            fault_code_sequence = tuple(fault_code_sequence)
         self.detail_values = tuple(detail_values)
+        self.fault_code_sequence = fault_code_sequence
+        self.fault_code_sequence_index = 0
         self.query_indices = []
         super().__init__([config], journal=journal)
+
+    async def async_getValues(self, device_id, func_code, address, count=1):
+        if (self.fault_code_sequence is not None and device_id == UNIT_ID and
+                func_code == 3 and address == FAULT_CODE_ADDRESS and count == 1):
+            index = min(self.fault_code_sequence_index,
+                        len(self.fault_code_sequence) - 1)
+            await self.core.async_setValues(
+                UNIT_ID, 3, FAULT_CODE_ADDRESS,
+                [self.fault_code_sequence[index]])
+            self.fault_code_sequence_index += 1
+        return await super().async_getValues(device_id, func_code, address, count)
 
     async def async_setValues(self, device_id, func_code, address, values):
         values = tuple(values)

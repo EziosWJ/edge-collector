@@ -145,5 +145,12 @@ def make_datastore(configs, *, journal=None, fixture_options=None):
                 if register['address'] == 8166:
                     register['value'] = value
                     break
-        return ZnckIFixture(journal=journal, config=config)
+        sequence = options.get('fault_code_sequence')
+        if sequence is not None:
+            if not isinstance(sequence, list) or not sequence or any(
+                    type(value) is not int or not 0 <= value <= 65535
+                    for value in sequence):
+                raise ValueError('fault_code_sequence 必须为非空 uint16 列表')
+        return ZnckIFixture(journal=journal, config=config,
+                            fault_code_sequence=sequence)
     return Datastore(configs, journal=journal)
