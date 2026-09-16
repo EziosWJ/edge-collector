@@ -15,6 +15,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/prometheus/client_golang v1.24.1
 	github.com/simonvetter/modbus v1.6.4
+	go.starlark.net v0.0.0-20231101134539-556fd59b42f6
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
 	github.com/swaggo/swag v1.8.12
