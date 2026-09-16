@@ -11,6 +11,16 @@
 - `uv run python scripts/go_smoke.py`：通过；真实 acquisition session 与 Runtime 已验证 RTU、Modbus TCP、MBAP over UDP、RTU over UDP，四协议 Runtime 并行运行互不阻塞，TCP 不可达 endpoint 可隔离并在热更新 endpoint 后恢复，网络同通道不同 endpoint 可使用相同 Unit ID。
 - `task db:integration:postgres`：通过，包含 PostgreSQL 全量迁移、Repository/API 及 ADR-0015 transport migration 契约。
 
+## ADR-0015 DB → cmd/api → browser 验收（2026-09-16）
+
+- `UV_CACHE_DIR=/tmp/modbus-uv-cache npm run test:acquisition-e2e`（在 `react-admin/`）：通过，进程退出码 0。
+- 测试临时执行 SQLite 全量 migration，启动 `modbus-simulator/config/adr0015-e2e.yaml`、真实 Go `cmd/api`、Vite 和 Playwright；未使用现有开发数据库。
+- 四协议共 4 个 API 通道、8 台设备：RTU 同通道 Unit 1/2；TCP、MBAP UDP、RTU over UDP 各在同一 API 通道配置 A/B 两个不同端口，两个 endpoint 均使用 Unit ID 1；C 端口用于热更新。
+- API `states` 验证 8 台设备均为 `ONLINE`，每台均有有效 FC03/FC04 `registerBlocks`；四个通道聚合状态均为 `ONLINE`。
+- browser 设备管理页验证不同 `host:port` endpoint 展示；实时寄存器页验证 8 台设备在线和四协议通道状态；RTU over UDP Unit ID 248 被前端拒绝，范围为 1～247。
+- 通过 API 将 TCP、MBAP UDP、RTU over UDP 的 A endpoint 分别热更新到 C 端口；无 API 重启，状态恢复 `ONLINE`，browser 重新加载后显示新 endpoint。
+- fixture 使用 TCP 2502～2504、MBAP UDP 2600～2602、RTU over UDP 2700～2702，避免依赖默认 simulator 端口；测试结束已清理临时进程和数据库。
+
 以上是模块、SQLite/API 和 simulator 验证；没有把它们表述为已完成的真实厂家设备验收。
 
 日期：2026-09-14。环境：Linux，uv 0.11.7，uv 项目 Python 3.12.13，PyModbus 3.15.0，PyYAML 6.0.3。
@@ -105,7 +115,7 @@ ALL GO SMOKE CHECKS PASSED
 
 ## 没有完成或不能确认的内容
 
-- 2026-09-14 历史记录未启动完整 `cmd/api`、数据库和浏览器端到端链路；2026-09-16 已补充 SQLite/API transport 契约验证和四协议真实 acquisition smoke，但没有修改用户现有持久设备配置。
+- 2026-09-14 历史记录未启动完整 `cmd/api`、数据库和浏览器端到端链路；本次 2026-09-16 已补充独立临时 SQLite、`cmd/api` 和 browser 验收，且没有修改用户现有持久设备配置。
 - 仍未完成真实厂家设备验收；网络 smoke 通过实际 acquisition session 和 simulator 端点验证，不替代现场设备测试。
 - 无厂家寄存器表，无法验证真实馈电硬件、高开保护器、告警地址、status bit 的厂家语义。
 - 无热加载、drop_rate、广播写、BCD/String 或物理 RS485 电气/时序模拟；详见 README。

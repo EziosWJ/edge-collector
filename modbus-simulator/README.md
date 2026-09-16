@@ -39,6 +39,8 @@ uv run modbus-simulator --check-config
 
 `rtu0` 的两台设备共用一条总线，通过 Slave ID 区分；`rtu1` 是另一条独立总线。不同通道的数据存储相互独立，复用同一设备 YAML 不会共享写入或动态状态。可复制通道配置扩展到 8 路；每路 alias 必须唯一，每个通道内 Slave / Unit 不得重复。
 
+ADR-0015 的完整验收使用 `config/adr0015-e2e.yaml`，它为 TCP、MBAP UDP、RTU over UDP 各启动 A/B/C 三个独立端口。Go API 将 A/B 配置到同一个协议通道且都使用 Unit ID 1，C 用于验证 endpoint 热更新；RTU 通道保留 Unit 1、2。
+
 ## 配置与设备映射
 
 - `config/simulator.yaml`：日志、通道、串口参数和设备文件列表。
@@ -239,7 +241,16 @@ uv run python scripts/go_smoke.py
 
 脚本直接执行真实 `NewModbusSessionFactory → PollChannelOnce → Runtime → CurrentStateStore`，按配置读取 FC03/FC04 原始寄存器并检查 `registerBlocks`、ONLINE 状态、通道聚合状态和 raw 值；再执行三次未知 Unit 超时，检查 OFFLINE、同总线另一 Unit 继续 ONLINE，以及恢复成功。随后对四种协议并行运行真实 Runtime，验证各通道互不阻塞；TCP 额外使用不可达 endpoint 验证单设备故障隔离、OFFLINE、endpoint 热更新和恢复，并验证同一轮询组不同 host 字符串可使用重复 Unit ID。整体进程有 180 秒编译/运行上限，Go 采集检查有 15 秒上下文期限。
 
-本次实际验收结果见 [TEST_RESULTS.md](TEST_RESULTS.md)。没有启动完整 API/数据库/UI 链路，不能将模块级真实串口联调等同于完整页面验收。
+本次实际验收结果见 [TEST_RESULTS.md](TEST_RESULTS.md)。默认 simulator 的 Go smoke 与完整 ADR-0015 browser 验收分开执行，前者不等同于真实厂家设备验收。
+
+ADR-0015 的完整 DB → `cmd/api` → browser 验收在仓库根目录执行：
+
+```bash
+cd react-admin
+UV_CACHE_DIR=/tmp/modbus-uv-cache npm run test:acquisition-e2e
+```
+
+该脚本临时执行 SQLite 全量 migration，启动 `config/adr0015-e2e.yaml`、Go `cmd/api`、Vite 和 Playwright；通过 REST API 创建四协议配置，验证真实 `registerBlocks`、通道 ONLINE、同通道不同 endpoint 的重复 Unit ID、endpoint 热更新，并在设备管理页和实时寄存器页检查 endpoint 展示与 Unit ID 校验。脚本结束时会停止自己启动的进程并删除临时数据库。
 
 ## 实现边界
 

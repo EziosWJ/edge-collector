@@ -323,6 +323,8 @@ PostgreSQL 与 SQLite 均验证：
 9. `/states` 与实时寄存器页面保持 transport-neutral 的 `registerBlocks` 契约；
 10. 后端检查、PostgreSQL/SQLite integration、前端 lint/build 和相关 simulator/E2E 全部通过。
 
+本阶段完整 browser 验收入口为 `cd react-admin && UV_CACHE_DIR=/tmp/modbus-uv-cache npm run test:acquisition-e2e`。该测试使用 `modbus-simulator/config/adr0015-e2e.yaml` 的真实不同网络端口，在临时 SQLite 数据库中经 `cmd/api` 创建四协议设备，再由 Playwright 检查配置列表 endpoint、实时寄存器 `registerBlocks`、四通道 ONLINE、重复 Unit ID 和 endpoint 热更新。
+
 ## 11. 交付策略
 
 采用 expand / migrate / contract 的顺序，确保每张 implementation ticket 完成时仓库仍可运行：
