@@ -153,4 +153,7 @@ def make_datastore(configs, *, journal=None, fixture_options=None):
                 raise ValueError('fault_code_sequence 必须为非空 uint16 列表')
         return ZnckIFixture(journal=journal, config=config,
                             fault_code_sequence=sequence)
+    if len(configs) == 1 and configs[0].get('fixture') == 'rtc_clock':
+        from .fixtures.rtc_clock import RtcClockFixture
+        return RtcClockFixture(journal=journal, config=configs[0])
     return Datastore(configs, journal=journal)
