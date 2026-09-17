@@ -181,19 +181,20 @@ type FinalReservation struct {
 func (FinalReservation) TableName() string { return "mqtt_outbox_reservation" }
 
 type CommandJournal struct {
-	CommandID     string     `gorm:"column:command_id;primaryKey" json:"commandId"`
-	DeviceID      string     `gorm:"column:device_id" json:"deviceId"`
-	CommandName   string     `gorm:"column:command_name" json:"name"`
-	PayloadHash   string     `gorm:"column:payload_hash" json:"-"`
-	ReceivedAt    time.Time  `gorm:"column:received_at" json:"receivedAt"`
-	IssuedAt      time.Time  `gorm:"column:issued_at" json:"issuedAt"`
-	ExpiresAt     time.Time  `gorm:"column:expires_at" json:"expiresAt"`
-	Status        string     `gorm:"column:status" json:"status"`
-	StartedAt     *time.Time `gorm:"column:started_at" json:"startedAt"`
-	CompletedAt   *time.Time `gorm:"column:completed_at" json:"completedAt"`
-	ResultPayload string     `gorm:"column:result_payload" json:"-"`
-	ErrorType     *string    `gorm:"column:error_type" json:"errorType,omitempty"`
-	ErrorMessage  *string    `gorm:"column:error_message" json:"errorMessage,omitempty"`
+	CommandID      string     `gorm:"column:command_id;primaryKey" json:"commandId"`
+	DeviceID       string     `gorm:"column:device_id" json:"deviceId"`
+	CommandName    string     `gorm:"column:command_name" json:"name"`
+	PayloadHash    string     `gorm:"column:payload_hash" json:"-"`
+	CommandPayload string     `gorm:"column:command_payload" json:"-"`
+	ReceivedAt     time.Time  `gorm:"column:received_at" json:"receivedAt"`
+	IssuedAt       time.Time  `gorm:"column:issued_at" json:"issuedAt"`
+	ExpiresAt      time.Time  `gorm:"column:expires_at" json:"expiresAt"`
+	Status         string     `gorm:"column:status" json:"status"`
+	StartedAt      *time.Time `gorm:"column:started_at" json:"startedAt"`
+	CompletedAt    *time.Time `gorm:"column:completed_at" json:"completedAt"`
+	ResultPayload  string     `gorm:"column:result_payload" json:"-"`
+	ErrorType      *string    `gorm:"column:error_type" json:"errorType,omitempty"`
+	ErrorMessage   *string    `gorm:"column:error_message" json:"errorMessage,omitempty"`
 }
 
 func (CommandJournal) TableName() string { return "mqtt_command_journal" }

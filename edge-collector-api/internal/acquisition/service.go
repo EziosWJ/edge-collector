@@ -154,6 +154,20 @@ func (s *Service) FindDevice(ctx context.Context, id int64) (*Device, error) {
 	return s.store.FindDevice(ctx, id)
 }
 
+// FindDeviceByExternalID resolves the stable MQTT identity without exposing
+// the database primary key to the transport layer. The concrete repository
+// implements this lookup; test stores that predate MQTT can return the same
+// domain not-found error through the optional seam.
+func (s *Service) FindDeviceByExternalID(ctx context.Context, externalID string) (*Device, error) {
+	resolver, ok := s.store.(interface {
+		FindDeviceByExternalID(context.Context, string) (*Device, error)
+	})
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return resolver.FindDeviceByExternalID(ctx, externalID)
+}
+
 // PublishedScriptVersion resolves only the immutable version currently
 // selected by a device's active script identity. Draft source is deliberately
 // never returned to the acquisition runtime.

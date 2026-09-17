@@ -4,7 +4,7 @@ import "errors"
 
 var (
 	ErrReliableResultCapacityExhausted = errors.New("RELIABLE_RESULT_CAPACITY_EXHAUSTED")
-	ErrCommandConflict                 = errors.New("COMMAND_ID_PAYLOAD_CONFLICT")
+	ErrCommandConflict                 = errors.New("COMMAND_ID_CONFLICT")
 	ErrCommandJournalCapacity          = errors.New("COMMAND_JOURNAL_CAPACITY_EXHAUSTED")
 	ErrOutboxMessageInvalid            = errors.New("MQTT_OUTBOX_MESSAGE_INVALID")
 	ErrReservationNotFound             = errors.New("MQTT_FINAL_RESERVATION_NOT_FOUND")

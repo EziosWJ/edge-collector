@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -236,6 +237,32 @@ type AdmissionResult struct {
 	Existing *CommandJournal
 }
 
+func (r *Repository) LookupCommand(ctx context.Context, commandID, payloadHash string) (*CommandJournal, error) {
+	if commandID == "" || payloadHash == "" {
+		return nil, ErrInvalidCommandID
+	}
+	var existing CommandJournal
+	err := r.db.WithContext(ctx).Where("command_id=?", commandID).Take(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if existing.PayloadHash != payloadHash {
+		return nil, ErrCommandConflict
+	}
+	return &existing, nil
+}
+
+func (r *Repository) ListIncompleteCommands(ctx context.Context) ([]CommandJournal, error) {
+	var values []CommandJournal
+	if err := r.db.WithContext(ctx).Where("status IN ?", []string{CommandStatusAccepted, CommandStatusRunning}).Order("received_at, command_id").Find(&values).Error; err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
 func (r *Repository) AdmitCommand(ctx context.Context, journal CommandJournal, accepted OutboxMessage, reservation FinalReservation) (AdmissionResult, error) {
 	if journal.CommandID == "" || journal.PayloadHash == "" || accepted.MessageID == "" || reservation.CommandID != journal.CommandID {
 		return AdmissionResult{}, ErrOutboxMessageInvalid
@@ -305,6 +332,116 @@ func (r *Repository) AdmitCommand(ctx context.Context, journal CommandJournal, a
 		return nil
 	})
 	return result, err
+}
+
+// AdmitRejectedCommand records a terminal rejection/expiry and its reliable
+// result atomically. Rejections do not need an ACCEPTED notice, but they still
+// pass the same outbox capacity gate before becoming visible to callers.
+func (r *Repository) AdmitRejectedCommand(ctx context.Context, journal CommandJournal, final OutboxMessage) (AdmissionResult, error) {
+	if journal.CommandID == "" || journal.PayloadHash == "" || final.CommandID == nil || *final.CommandID != journal.CommandID || final.MessageType != OutboxMessageTypeCommandResult {
+		return AdmissionResult{}, ErrOutboxMessageInvalid
+	}
+	if journal.Status != CommandStatusRejected && journal.Status != CommandStatusExpired && journal.Status != CommandStatusFailed {
+		return AdmissionResult{}, ErrOutboxMessageInvalid
+	}
+	if err := validateOutboxMessage(final); err != nil {
+		return AdmissionResult{}, err
+	}
+	result := AdmissionResult{}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		config, err := lockConfig(tx)
+		if err != nil {
+			return err
+		}
+		var existing CommandJournal
+		findErr := tx.Where("command_id=?", journal.CommandID).Take(&existing).Error
+		if findErr == nil {
+			if existing.PayloadHash != journal.PayloadHash {
+				return ErrCommandConflict
+			}
+			result.Existing = &existing
+			return nil
+		}
+		if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
+		}
+		var journalRows int64
+		if err := tx.Model(&CommandJournal{}).Count(&journalRows).Error; err != nil {
+			return err
+		}
+		if journalRows >= int64(config.CommandJournalMaxRows) {
+			return ErrCommandJournalCapacity
+		}
+		if err := r.ensureMessageCapacity(tx, *config, final.PayloadBytes, 1); err != nil {
+			return ErrReliableResultCapacityExhausted
+		}
+		if journal.ReceivedAt.IsZero() {
+			journal.ReceivedAt = r.now().UTC()
+		}
+		if journal.CompletedAt == nil {
+			completed := r.now().UTC()
+			journal.CompletedAt = &completed
+		}
+		if final.CreatedAt.IsZero() {
+			final.CreatedAt = r.now().UTC()
+		}
+		journal.ResultPayload = final.Payload
+		if err := tx.Create(&journal).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&final).Error; err != nil {
+			return err
+		}
+		result.Admitted = true
+		return nil
+	})
+	return result, err
+}
+
+// RequeueStoredFinal reconstructs a durable result row for a duplicate
+// terminal delivery after the previous row was already PUBACKed and deleted.
+// It never creates an execution token or touches the device runtime.
+func (r *Repository) RequeueStoredFinal(ctx context.Context, commandID, topic string) error {
+	if commandID == "" || topic == "" {
+		return ErrInvalidCommandID
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		config, err := lockConfig(tx)
+		if err != nil {
+			return err
+		}
+		var journal CommandJournal
+		if err := tx.Where("command_id=?", commandID).Take(&journal).Error; err != nil {
+			return err
+		}
+		if !isTerminalCommandStatus(journal.Status) || journal.ResultPayload == "" {
+			return nil
+		}
+		var existing int64
+		if err := tx.Model(&OutboxMessage{}).Where("command_id=? AND message_type=?", commandID, OutboxMessageTypeCommandResult).Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing > 0 {
+			return nil
+		}
+		var envelope Envelope
+		if err := json.Unmarshal([]byte(journal.ResultPayload), &envelope); err != nil {
+			return ErrOutboxMessageInvalid
+		}
+		now := r.now().UTC()
+		envelope.MessageID = NewMessageID(now)
+		payload, err := json.Marshal(envelope)
+		if err != nil {
+			return ErrOutboxMessageInvalid
+		}
+		command := commandID
+		expiresAt := now.Add(time.Duration(config.OutboxRetentionDays) * 24 * time.Hour)
+		final := OutboxMessage{MessageID: envelope.MessageID, MessageType: OutboxMessageTypeCommandResult, CommandID: &command, Topic: topic, QoS: 1, Retain: 0, Payload: string(payload), PayloadBytes: int64(len(payload)), Priority: OutboxPriorityCommandFinal, CreatedAt: now, ExpiresAt: &expiresAt}
+		if err := r.ensureMessageCapacity(tx, *config, final.PayloadBytes, 1); err != nil {
+			return ErrReliableResultCapacityExhausted
+		}
+		return tx.Create(&final).Error
+	})
 }
 
 // MarkCommandRunning is idempotent and only transitions an admitted command.

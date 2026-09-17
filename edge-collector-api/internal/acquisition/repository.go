@@ -186,6 +186,26 @@ func (r *Repository) FindDevice(ctx context.Context, id int64) (*Device, error) 
 	return &value, nil
 }
 
+func (r *Repository) FindDeviceByExternalID(ctx context.Context, externalID string) (*Device, error) {
+	var value Device
+	err := r.db.WithContext(ctx).Where("external_id=? AND deleted=0", strings.TrimSpace(externalID)).Take(&value).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	devices := []Device{value}
+	if err := r.loadRegisterBlocks(ctx, devices); err != nil {
+		return nil, err
+	}
+	if err := r.loadNetworkEndpoints(ctx, devices); err != nil {
+		return nil, err
+	}
+	value = devices[0]
+	return &value, nil
+}
+
 func (r *Repository) UnitIDExists(ctx context.Context, channelID int64, unitID uint8, excludeID int64) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&Device{}).Where(

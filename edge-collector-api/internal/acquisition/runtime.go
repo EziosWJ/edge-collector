@@ -797,6 +797,11 @@ func (r *channelRunner) executeCommand(ctx context.Context, config channelConfig
 	}
 	var result script.Result
 	if err == nil {
+		if command.request.OnStarted != nil {
+			err = command.request.OnStarted()
+		}
+	}
+	if err == nil {
 		host := newDeviceScriptHost(session, device.UnitID, reads)
 		result, err = executor.ExecuteCommand(ctx, cycle.version, cycle.invocation, host, command.request.Name, command.request.Args)
 	}

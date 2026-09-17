@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition/script"
 )
@@ -14,6 +15,8 @@ var (
 	ErrCommandTargetUnavailable = errors.New("COMMAND_TARGET_UNAVAILABLE")
 	ErrCommandUnavailable       = errors.New("COMMAND_ENTRYPOINT_UNAVAILABLE")
 	ErrCommandRuntimeStopped    = errors.New("COMMAND_RUNTIME_STOPPED")
+	ErrCommandNotRunnable       = errors.New("COMMAND_NOT_RUNNABLE")
+	ErrCommandExpired           = errors.New("COMMAND_EXPIRED")
 )
 
 // CommandRequest is the transport-neutral command invocation handed from
@@ -23,6 +26,8 @@ type CommandRequest struct {
 	DeviceID  int64
 	Name      string
 	Args      any
+	ExpiresAt time.Time
+	OnStarted func() error
 }
 
 type CommandExecutionResult struct {
@@ -33,6 +38,16 @@ type CommandExecutionResult struct {
 
 type CommandFuture struct {
 	done <-chan CommandExecutionResult
+}
+
+// NewCommandFuture creates the transport-neutral completion seam used by
+// adapters that submit work to the runner. Runtime.EnqueueCommand creates its
+// own future; this constructor is also useful for integration adapters that
+// need to bridge a future without seeing a Modbus session.
+func NewCommandFuture() (*CommandFuture, func(CommandExecutionResult)) {
+	done := make(chan CommandExecutionResult, 1)
+	future := &CommandFuture{done: done}
+	return future, func(result CommandExecutionResult) { resolveCommandResult(done, result) }
 }
 
 func (f *CommandFuture) Wait(ctx context.Context) (CommandExecutionResult, error) {
