@@ -24,6 +24,7 @@ type runtimeImplementation struct {
 	printSink      PrintSink
 	counterFactory ModbusOperationCounterFactory
 	now            func() time.Time
+	hostTime       func() time.Time
 	state          *stateStore
 
 	cacheMu sync.Mutex
@@ -42,6 +43,10 @@ func newRuntimeImplementation(options Options) *runtimeImplementation {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	hostTime := options.HostTime
+	if hostTime == nil {
+		hostTime = time.Now
+	}
 	counterFactory := options.OperationCounterFactory
 	if counterFactory == nil {
 		counterFactory = NewModbusOperationCounter
@@ -51,6 +56,7 @@ func newRuntimeImplementation(options Options) *runtimeImplementation {
 		printSink:      options.PrintSink,
 		counterFactory: counterFactory,
 		now:            now,
+		hostTime:       hostTime,
 		state:          newStateStore(),
 		cache:          make(map[cacheKey]*CompiledScript),
 	}
@@ -233,6 +239,7 @@ func (impl *runtimeImplementation) invoke(ctx context.Context, compiled *Compile
 		state:      impl.state.load(scope).state,
 		counter:    impl.counterFactory(impl.limits.MaxModbusOperations),
 		now:        impl.now,
+		hostTime:   impl.hostTime(),
 		printSink:  impl.printSink,
 	}
 	if execution.counter == nil {
