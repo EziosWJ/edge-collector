@@ -13,7 +13,16 @@ class ConfigTest(unittest.TestCase):
     def test_default_mapping(self):
         config = load_config(ROOT / 'config/simulator.yaml')
         self.assertEqual(len(config['channels']), 5)
-        self.assertEqual([d['slave_id'] for d in config['channels'][0]['devices']], [1, 2])
+        self.assertEqual([d['slave_id'] for d in config['channels'][0]['devices']], [1, 2, 3])
+        time_device = config['channels'][0]['devices'][2]
+        self.assertEqual(time_device['name'], '时间寄存器测试设备-03')
+        self.assertEqual(
+            [(register['area'], register['address'], register['value'])
+             for register in time_device['registers']],
+            [('holding_register', 100, 0),
+             ('holding_register', 101, 0),
+             ('holding_register', 102, 0)],
+        )
 
     def test_invalid_device(self):
         base = load_config(ROOT / 'config/simulator.yaml')['channels'][0]['devices'][0]
