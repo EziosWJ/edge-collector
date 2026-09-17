@@ -1,26 +1,27 @@
-# Starlark 条件写测试设备：三个保持寄存器分别作为时、分、秒。
+# Starlark 主机时间同步测试设备：三个保持寄存器分别作为时、分、秒。
 # 仅用于联调，不代表任何厂家协议。
 name: 时间寄存器测试设备-03
+fixture: rtc_clock
 slave_id: 3
 behavior:
   response_delay_ms: 0
 registers:
   - name: hour
-    description: 小时，测试约定范围 0..23
+    description: 小时，RTC 范围 0..23
     area: holding_register
     address: 100
     type: uint16
     length: 1
     value: 0
   - name: minute
-    description: 分钟，测试约定范围 0..59
+    description: 分钟，RTC 范围 0..59
     area: holding_register
     address: 101
     type: uint16
     length: 1
     value: 0
   - name: second
-    description: 秒，测试约定范围 0..59
+    description: 秒，RTC 范围 0..59
     area: holding_register
     address: 102
     type: uint16
