@@ -92,6 +92,11 @@ type Options struct {
 	PrintSink               PrintSink
 	OperationCounterFactory ModbusOperationCounterFactory
 	Now                     func() time.Time
+	// HostTime supplies the edge-controller wall clock exposed through
+	// ctx.host_time(). It should return the process/site local time. The value is
+	// captured once at the beginning of each invocation so all fields are stable
+	// for the complete after_poll execution.
+	HostTime func() time.Time
 }
 
 // StateScope identifies one device and one immutable script version.
