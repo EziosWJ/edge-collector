@@ -432,8 +432,9 @@ func (r *Repository) OutboxStats(ctx context.Context) (OutboxStats, error) {
 	if err := r.db.WithContext(ctx).Model(&OutboxMessage{}).Select("COALESCE(SUM(payload_bytes), 0)").Scan(&stats.Bytes).Error; err != nil {
 		return stats, err
 	}
-	var oldest time.Time
-	if err := r.db.WithContext(ctx).Model(&OutboxMessage{}).Select("MIN(created_at)").Scan(&oldest).Error; err == nil && !oldest.IsZero() {
+	var oldestRow OutboxMessage
+	if err := r.db.WithContext(ctx).Select("created_at").Order("created_at, id").First(&oldestRow).Error; err == nil && !oldestRow.CreatedAt.IsZero() {
+		oldest := oldestRow.CreatedAt
 		stats.OldestAt = &oldest
 	}
 	var lastError string

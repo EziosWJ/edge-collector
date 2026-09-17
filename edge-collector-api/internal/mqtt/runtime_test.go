@@ -1,0 +1,106 @@
+package mqtt
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/audit"
+)
+
+func TestRuntimeRestoresSubscriptionAndHonorsDisabledConfig(t *testing.T) {
+	repository, _, cleanup := newSQLiteRepository(t)
+	defer cleanup()
+	current, err := repository.GetConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := configInput(current)
+	input.Enabled = true
+	if _, err := repository.SaveConfig(context.Background(), input, auditEventForTest()); err != nil {
+		t.Fatal(err)
+	}
+	fake := &testTransport{}
+	factory := func(_ context.Context, _ RuntimeConfig, callbacks TransportCallbacks) (Transport, error) {
+		fake.mu.Lock()
+		fake.callbacks = callbacks
+		fake.mu.Unlock()
+		return fake, nil
+	}
+	runtime := NewRuntime(repository, factory)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	waitFor(t, func() bool { return runtime.State().State == RuntimeStateConnecting })
+	fake.mu.Lock()
+	callbacks := fake.callbacks
+	fake.mu.Unlock()
+	callbacks.OnConnected()
+	waitFor(t, func() bool { return runtime.State().State == RuntimeStateConnected })
+	fake.mu.Lock()
+	filters := append([]string(nil), fake.subscriptions...)
+	fake.mu.Unlock()
+	if len(filters) != 1 || filters[0] != "edge/edge-01/device/+/command" {
+		t.Fatalf("subscriptions = %v", filters)
+	}
+	current, err = repository.GetConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = configInput(current)
+	input.Enabled = false
+	if _, err := repository.SaveConfig(ctx, input, auditEventForTest()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return runtime.State().State == RuntimeStateDisabled })
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime did not stop")
+	}
+}
+
+type testTransport struct {
+	mu            sync.Mutex
+	callbacks     TransportCallbacks
+	subscriptions []string
+	closed        bool
+}
+
+func (t *testTransport) Publish(context.Context, Publication) error { return nil }
+
+func (t *testTransport) Subscribe(_ context.Context, topic string, _ byte) error {
+	t.mu.Lock()
+	t.subscriptions = append(t.subscriptions, topic)
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *testTransport) Close() error {
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
+	return nil
+}
+
+func waitFor(t *testing.T, predicate func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if predicate() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition was not reached")
+}
+
+func auditEventForTest() audit.Event {
+	return audit.Event{Action: "mqtt.test", Resource: "MQTT 配置"}
+}

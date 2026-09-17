@@ -57,6 +57,7 @@ func (SerialChannel) TableName() string { return "acquisition_serial_channel" }
 type Device struct {
 	ScriptID         *int64           `gorm:"column:script_id" json:"scriptId,omitempty"`
 	ID               int64            `gorm:"column:id;primaryKey" json:"id"`
+	ExternalID       string           `gorm:"column:external_id" json:"externalId"`
 	Name             string           `gorm:"column:name" json:"name"`
 	DeviceType       string           `gorm:"column:device_type" json:"deviceType"`
 	ChannelID        int64            `gorm:"column:channel_id" json:"channelId"`
@@ -93,6 +94,7 @@ type ChannelInput struct {
 }
 
 type DeviceInput struct {
+	ExternalID       string
 	Name             string
 	DeviceType       string
 	ChannelID        int64

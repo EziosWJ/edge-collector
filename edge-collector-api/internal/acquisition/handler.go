@@ -102,6 +102,7 @@ type channelRequest struct {
 }
 
 type deviceRequest struct {
+	ExternalID       string                  `json:"externalId"`
 	Name             string                  `json:"name"`
 	DeviceType       string                  `json:"deviceType"`
 	ChannelID        int64                   `json:"channelId"`
@@ -195,7 +196,7 @@ func (r deviceRequest) input() DeviceInput {
 	if r.NetworkEndpoint != nil {
 		endpoint = &NetworkEndpoint{Host: r.NetworkEndpoint.Host, Port: r.NetworkEndpoint.Port}
 	}
-	return DeviceInput{Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, UnitID: r.UnitID, ScriptID: r.ScriptID, NetworkEndpoint: endpoint, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled, RegisterBlocks: blocks}
+	return DeviceInput{ExternalID: r.ExternalID, Name: r.Name, DeviceType: r.DeviceType, ChannelID: r.ChannelID, UnitID: r.UnitID, ScriptID: r.ScriptID, NetworkEndpoint: endpoint, PollIntervalMS: r.PollIntervalMS, FailureThreshold: r.FailureThreshold, Enabled: r.Enabled, RegisterBlocks: blocks}
 }
 
 func (r scriptRequest) input() ScriptInput {

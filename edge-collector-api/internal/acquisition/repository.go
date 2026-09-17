@@ -204,6 +204,9 @@ func (r *Repository) NetworkEndpointExists(ctx context.Context, channelID int64,
 }
 
 func (r *Repository) CreateDevice(ctx context.Context, value Device, event audit.Event) (Device, error) {
+	if strings.TrimSpace(value.ExternalID) == "" {
+		value.ExternalID = newExternalID()
+	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := ensureDeviceScriptAvailable(tx, value.ScriptID); err != nil {
 			return err
@@ -235,7 +238,7 @@ func (r *Repository) UpdateDevice(ctx context.Context, value Device, event audit
 			return err
 		}
 		if err := tx.Model(&Device{}).Where("id=? AND deleted=0", value.ID).Updates(map[string]any{
-			"name": value.Name, "device_type": value.DeviceType, "channel_id": value.ChannelID,
+			"external_id": value.ExternalID, "name": value.Name, "device_type": value.DeviceType, "channel_id": value.ChannelID,
 			"unit_id": value.UnitID, "poll_interval_ms": value.PollIntervalMS, "script_id": value.ScriptID,
 			"failure_threshold": value.FailureThreshold, "enabled": value.Enabled, "update_time": time.Now().UTC(),
 		}).Error; err != nil {

@@ -2,12 +2,14 @@ package acquisition
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/audit"
@@ -213,6 +215,9 @@ func (s *Service) UpdateDevice(ctx context.Context, meta AuditMetadata, id int64
 	}
 	if err := validateDeviceForProtocol(input, channel.Protocol); err != nil {
 		return Device{}, err
+	}
+	if strings.TrimSpace(input.ExternalID) == "" {
+		input.ExternalID = current.ExternalID
 	}
 	if err := s.validateDeviceScript(ctx, input.ScriptID); err != nil {
 		return Device{}, err
@@ -467,6 +472,9 @@ func validateDevice(input DeviceInput) error {
 	if strings.TrimSpace(input.Name) == "" || input.ChannelID < 1 || input.PollIntervalMS <= 0 || input.FailureThreshold <= 0 || (input.Enabled != Enabled && input.Enabled != Disabled) {
 		return ErrInvalid
 	}
+	if input.ExternalID != "" && !validExternalID(input.ExternalID) {
+		return ErrInvalid
+	}
 	if input.DeviceType != DeviceTypeFeedProtector {
 		return ErrUnsupportedDevice
 	}
@@ -692,7 +700,23 @@ func deviceFrom(input DeviceInput, id int64) Device {
 		value.Host = strings.TrimSpace(value.Host)
 		endpoint = &value
 	}
-	return Device{ID: id, Name: strings.TrimSpace(input.Name), DeviceType: strings.TrimSpace(input.DeviceType), ChannelID: input.ChannelID, UnitID: input.UnitID, ScriptID: input.ScriptID, NetworkEndpoint: endpoint, PollIntervalMS: input.PollIntervalMS, FailureThreshold: input.FailureThreshold, Enabled: input.Enabled, RegisterBlocks: blocks}
+	externalID := strings.TrimSpace(input.ExternalID)
+	if externalID == "" && id == 0 {
+		externalID = newExternalID()
+	}
+	return Device{ID: id, ExternalID: externalID, Name: strings.TrimSpace(input.Name), DeviceType: strings.TrimSpace(input.DeviceType), ChannelID: input.ChannelID, UnitID: input.UnitID, ScriptID: input.ScriptID, NetworkEndpoint: endpoint, PollIntervalMS: input.PollIntervalMS, FailureThreshold: input.FailureThreshold, Enabled: input.Enabled, RegisterBlocks: blocks}
+}
+
+func validExternalID(value string) bool {
+	return len([]byte(value)) <= 128 && value != "" && !strings.ContainsAny(value, "/+#\x00\r\n")
+}
+
+func newExternalID() string {
+	bytes := make([]byte, 12)
+	if _, err := cryptorand.Read(bytes); err == nil {
+		return "device-" + hex.EncodeToString(bytes)
+	}
+	return fmt.Sprintf("device-%d", time.Now().UTC().UnixNano())
 }
 
 func (s *Service) deviceAddressExists(ctx context.Context, input DeviceInput, protocol string, excludeID int64) (bool, error) {
