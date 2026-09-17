@@ -219,6 +219,7 @@ func (p *LatestStateProjector) Run(ctx context.Context) error {
 				default:
 				}
 			}
+		case <-timer.C:
 		}
 	}
 }
