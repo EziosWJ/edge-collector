@@ -15,6 +15,7 @@ import {
   Menu,
   MonitorCog,
   Package,
+  RadioTower,
   ScrollText,
   Settings,
   ShieldHalf,
@@ -60,6 +61,7 @@ const MENU_ICON_MAP: Record<string, LucideIcon> = {
   module: Boxes,
   branch: GitBranch,
   monitor: MonitorCog,
+  mqtt: RadioTower,
 };
 
 function normalizeIconName(icon?: string | null) {

@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0",
     "test:datetime": "node tests/datetime.mjs",
+    "test:mqtt-config": "node tests/mqtt-config.mjs",
     "test:register-format": "node tests/register-format.mjs",
     "test:realtime-null-state": "node tests/realtime-null-state.mjs",
     "test:realtime-layout": "node tests/realtime-layout.mjs",

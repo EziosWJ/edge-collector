@@ -207,6 +207,50 @@ export const mockPermissions: PermissionRecord[] = [
     description: "数据维度权限点",
     updatedAt: "2026-05-02 11:40",
   },
+  {
+    id: 6,
+    name: "MQTT 配置查看",
+    code: "mqtt:config:list",
+    menuName: "MQTT 管理",
+    type: "page",
+    status: "enabled",
+    sort: 6,
+    description: "查看 MQTT 配置和运行状态",
+    updatedAt: "2026-09-17 10:00",
+  },
+  {
+    id: 7,
+    name: "MQTT 配置修改",
+    code: "mqtt:config:edit",
+    menuName: "MQTT 管理",
+    type: "button",
+    status: "enabled",
+    sort: 7,
+    description: "修改 MQTT 连接与可靠性配置",
+    updatedAt: "2026-09-17 10:00",
+  },
+  {
+    id: 8,
+    name: "MQTT 连接测试",
+    code: "mqtt:config:test",
+    menuName: "MQTT 管理",
+    type: "button",
+    status: "enabled",
+    sort: 8,
+    description: "测试 MQTT Broker 连接",
+    updatedAt: "2026-09-17 10:00",
+  },
+  {
+    id: 9,
+    name: "Command Journal 查看",
+    code: "mqtt:command:list",
+    menuName: "MQTT 管理",
+    type: "page",
+    status: "enabled",
+    sort: 9,
+    description: "查看 MQTT Command Journal 状态",
+    updatedAt: "2026-09-17 10:00",
+  },
 ];
 
 export const mockCurrentUserPermissionCodes: string[] = [
@@ -220,6 +264,10 @@ export const mockCurrentUserPermissionCodes: string[] = [
   "system:config:list",
   "system:permission:list",
   "system:permission:add",
+  "mqtt:config:list",
+  "mqtt:config:edit",
+  "mqtt:config:test",
+  "mqtt:command:list",
 ] as const;
 
 export const mockRolePermissionDetails: Record<number, RolePermissionDetail> = {

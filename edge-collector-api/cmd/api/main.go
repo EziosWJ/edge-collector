@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	_ "github.com/EziosWJ/edge-collector/edge-collector-api/docs"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/acquisition"
@@ -22,6 +24,7 @@ import (
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/dictionary"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/filemgmt"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/logmgmt"
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/mqtt"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/notification"
 	platformdatabase "github.com/EziosWJ/edge-collector/edge-collector-api/internal/platform/database"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/rbac"
@@ -163,6 +166,75 @@ func main() {
 	acquisitionService.SetRuntimeRefresher(acquisitionRuntime.Refresh)
 	acquisitionService.SetScriptRuntimeStateReader(acquisitionRuntime)
 
+	mqttSecretBox, secretErr := mqtt.NewEnvironmentSecretBox()
+	if secretErr != nil && !errors.Is(secretErr, mqtt.ErrMasterSecretRequired) {
+		slog.Warn("MQTT master secret unavailable; encrypted credentials cannot be used", "error_type", fmt.Sprintf("%T", secretErr))
+	}
+	mqttRepository := mqtt.NewRepository(database.GORM, mqttSecretBox)
+	mqttConfig, err := mqttRepository.GetConfig(context.Background())
+	if err != nil {
+		slog.Error("load MQTT configuration", "error", err)
+		os.Exit(1)
+	}
+	mqttTopics, err := mqtt.NewTopicBuilder(mqttConfig.TopicPrefix, mqttConfig.EdgeID)
+	if err != nil {
+		slog.Error("build MQTT topic configuration", "error_type", fmt.Sprintf("%T", err))
+		os.Exit(1)
+	}
+	mqttRuntime := mqtt.NewRuntime(mqttRepository)
+	mqttWorker := mqtt.NewReliableOutboxWorker(mqttRepository, mqttRuntime, mqttConfig.CommandQueueCapacity, stdlog.New(os.Stderr, "mqtt-outbox: ", stdlog.LstdFlags))
+	mqttProjector := mqtt.NewLatestStateProjector(mqttRuntime, mqttTopics, time.Duration(mqttConfig.RawPublishIntervalMS)*time.Millisecond)
+	mqttEvents := mqtt.NewEventProjector(mqttWorker, mqttTopics, time.Duration(mqttConfig.OutboxRetentionDays)*24*time.Hour)
+	acquisitionRuntime.SetCommandQueueConfig(mqttConfig.CommandQueueCapacity, mqttConfig.CommandPollFairness)
+	acquisitionState.SetObserver(mqttProjector.OnState)
+	mqttProjector.Seed(acquisitionState.List())
+
+	// These sinks are invoked only after acquisition has committed its state
+	// and at the channel runner's safe boundary. MQTT callbacks never receive
+	// or operate a Modbus session.
+	acquisitionRuntime.SetScriptRuntime(acquisition.RuntimeScriptConfig{
+		VersionProvider: acquisitionService.PublishedScriptVersion,
+		Executor:        scriptRuntime,
+		EventSink:       mqttEvents.Emit,
+		CycleSink: func(_ context.Context, state acquisition.CurrentState) {
+			mqttProjector.OnCycle(state)
+		},
+	})
+	mqttIntake := mqtt.NewCommandIntake(mqttRepository, acquisitionService, acquisitionRuntime, mqttTopics)
+	mqttService, err := mqtt.NewService(mqttRepository, mqttRuntime, mqttProjector, mqttEvents, mqttIntake, acquisitionRuntime)
+	if err != nil {
+		slog.Error("build MQTT service", "error", err)
+		os.Exit(1)
+	}
+	mqttRuntime.SetCallbacks(mqtt.RuntimeCallbacks{
+		OnConnected: func(ctx context.Context, runtimeConfig mqtt.RuntimeConfig) {
+			builder, builderErr := mqtt.NewTopicBuilder(runtimeConfig.TopicPrefix, runtimeConfig.EdgeID)
+			if builderErr != nil {
+				slog.Error("configure MQTT projections after connect", "error_type", fmt.Sprintf("%T", builderErr))
+				return
+			}
+			mqttProjector.Configure(builder, time.Duration(runtimeConfig.RawPublishIntervalMS)*time.Millisecond)
+			mqttEvents.Configure(builder, time.Duration(runtimeConfig.OutboxRetentionDays)*24*time.Hour)
+			mqttIntake.Configure(builder)
+			mqttProjector.Republish()
+			payload, payloadErr := mqtt.BuildEdgeStatus(runtimeConfig.EdgeID, mqtt.NewMessageID(time.Now().UTC()), time.Now().UTC(), true, "connected")
+			if payloadErr != nil {
+				slog.Error("build MQTT online status", "error_type", fmt.Sprintf("%T", payloadErr))
+				return
+			}
+			publishContext, cancel := context.WithTimeout(ctx, time.Duration(runtimeConfig.ConnectTimeoutMS)*time.Millisecond)
+			defer cancel()
+			if publishErr := mqttRuntime.Publish(publishContext, mqtt.Publication{Topic: builder.EdgeStatus(), QoS: 1, Retain: true, Payload: payload}); publishErr != nil {
+				slog.Error("publish MQTT online status", "error_type", fmt.Sprintf("%T", publishErr))
+			}
+		},
+		OnMessage: func(topic string, payload []byte) {
+			if intakeErr := mqttIntake.Handle(context.Background(), topic, payload); intakeErr != nil {
+				slog.Error("handle MQTT command", "error_code", mqtt.StableCommandErrorCode(intakeErr))
+			}
+		},
+	})
+
 	application, err := app.New(*cfg, database, app.Dependencies{
 		Acquisition:      acquisitionService,
 		AcquisitionState: acquisitionState,
@@ -175,6 +247,7 @@ func main() {
 		File:             fileService,
 		Log:              logService,
 		Notification:     notificationService,
+		MQTT:             mqttService,
 	})
 	if err != nil {
 		slog.Error("build application", "error", err)
@@ -182,13 +255,27 @@ func main() {
 	}
 
 	runtimeContext, cancelRuntime := context.WithCancel(context.Background())
-	runtimeDone := make(chan struct{})
-	go func() {
-		defer close(runtimeDone)
-		if err := acquisitionRuntime.Run(runtimeContext); err != nil && !errors.Is(err, context.Canceled) {
-			application.Logger.Error("acquisition runtime stopped", "error", err)
-		}
-	}()
+	var runtimeWait sync.WaitGroup
+	startRuntime := func(name string, run func(context.Context) error) {
+		runtimeWait.Add(1)
+		go func() {
+			defer runtimeWait.Done()
+			if runErr := run(runtimeContext); runErr != nil && !errors.Is(runErr, context.Canceled) {
+				application.Logger.Error(name+" stopped", "error_type", fmt.Sprintf("%T", runErr))
+			}
+		}()
+	}
+	startRuntime("MQTT outbox worker", mqttWorker.Run)
+	startRuntime("MQTT latest-state projector", mqttProjector.Run)
+	startRuntime("acquisition runtime", acquisitionRuntime.Run)
+	startupContext, cancelStartup := context.WithTimeout(runtimeContext, 5*time.Second)
+	if startupErr := acquisitionRuntime.WaitStarted(startupContext); startupErr != nil {
+		application.Logger.Error("acquisition runtime startup incomplete", "error_type", fmt.Sprintf("%T", startupErr))
+	} else if recoveryErr := mqttIntake.Recover(runtimeContext); recoveryErr != nil {
+		application.Logger.Error("recover MQTT commands", "error_type", fmt.Sprintf("%T", recoveryErr))
+	}
+	cancelStartup()
+	startRuntime("MQTT runtime", mqttRuntime.Run)
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Address,
@@ -211,7 +298,7 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	cancelRuntime()
-	<-runtimeDone
+	runtimeWait.Wait()
 
 	shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()

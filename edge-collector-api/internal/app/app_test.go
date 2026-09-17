@@ -17,6 +17,7 @@ import (
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/dictionary"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/filemgmt"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/logmgmt"
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/mqtt"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/rbac"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/sysconfig"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/usermgmt"
@@ -154,6 +155,34 @@ func TestBuildRegistersAllSystemManagementRoutes(t *testing.T) {
 	}
 }
 
+func TestBuildRegistersMQTTManagementRoutesBehindBearerAuth(t *testing.T) {
+	deps := newFakeStores().deps()
+	deps.MQTT = emptyMQTTService{}
+	router, err := Build(testConfig("test", false), readyProbe{}, deps)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	for _, path := range []string{
+		"/api/v1/mqtt/config",
+		"/api/v1/mqtt/test-connection",
+		"/api/v1/mqtt/state",
+		"/api/v1/mqtt/outbox/stats",
+		"/api/v1/mqtt/commands",
+		"/api/v1/mqtt/commands/command-1",
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		if path == "/api/v1/mqtt/test-connection" {
+			request = httptest.NewRequest(http.MethodPost, path, nil)
+		}
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Errorf("MQTT %s status = %d, want %d", path, response.Code, http.StatusUnauthorized)
+		}
+	}
+}
+
 func TestBuildAuthenticatesMultipartRequestsBeforeBodyPolicy(t *testing.T) {
 	router, err := Build(testConfig("test", false), readyProbe{}, newFakeStores().deps())
 	if err != nil {
@@ -239,6 +268,30 @@ func TestBuildRegistersSwaggerOnlyInDev(t *testing.T) {
 type authMemoryStore struct {
 	users    map[string]auth.User
 	sessions map[string]auth.AuthSession
+}
+
+type emptyMQTTService struct{}
+
+func (emptyMQTTService) GetConfig(context.Context) (mqtt.ConfigView, error) {
+	return mqtt.ConfigView{}, nil
+}
+func (emptyMQTTService) UpdateConfig(context.Context, audit.Metadata, mqtt.ConfigInput) (mqtt.ConfigView, error) {
+	return mqtt.ConfigView{}, nil
+}
+func (emptyMQTTService) TestConnection(context.Context, *mqtt.ConfigInput) (mqtt.TestConnectionView, error) {
+	return mqtt.TestConnectionView{}, nil
+}
+func (emptyMQTTService) State(context.Context) (mqtt.RuntimeStateView, error) {
+	return mqtt.RuntimeStateView{}, nil
+}
+func (emptyMQTTService) OutboxStats(context.Context) (mqtt.OutboxStatsView, error) {
+	return mqtt.OutboxStatsView{}, nil
+}
+func (emptyMQTTService) PageCommands(context.Context, mqtt.CommandJournalQuery) (mqtt.Page[mqtt.CommandJournalView], error) {
+	return mqtt.Page[mqtt.CommandJournalView]{}, nil
+}
+func (emptyMQTTService) FindCommand(context.Context, string) (*mqtt.CommandJournalView, error) {
+	return nil, nil
 }
 
 func (s *authMemoryStore) FindUserByUsername(_ context.Context, username string) (*auth.User, error) {

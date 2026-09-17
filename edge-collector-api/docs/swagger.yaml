@@ -31,6 +31,8 @@ definitions:
         type: string
       enabled:
         type: integer
+      externalId:
+        type: string
       failureThreshold:
         type: integer
       name:
@@ -353,6 +355,79 @@ definitions:
         type: integer
       data: {}
       message:
+        type: string
+    type: object
+  mqtt.ApiEnvelope:
+    properties:
+      code:
+        type: integer
+      data: {}
+      message:
+        type: string
+    type: object
+  mqtt.SecretAction:
+    enum:
+    - keep
+    - set
+    - clear
+    type: string
+    x-enum-varnames:
+    - SecretKeep
+    - SecretSet
+    - SecretClear
+  mqtt.configRequest:
+    properties:
+      brokerUrl:
+        type: string
+      caCertificate:
+        type: string
+      clientCertificate:
+        type: string
+      clientId:
+        type: string
+      clientPrivateKey:
+        type: string
+      clientPrivateKeyAction:
+        $ref: '#/definitions/mqtt.SecretAction'
+      commandJournalMaxRows:
+        type: integer
+      commandJournalRetentionDays:
+        type: integer
+      commandPollFairness:
+        type: integer
+      commandQueueCapacity:
+        type: integer
+      connectTimeoutMs:
+        type: integer
+      edgeId:
+        type: string
+      enabled:
+        type: boolean
+      keepAliveSeconds:
+        type: integer
+      outboxMaxBytes:
+        type: integer
+      outboxMaxRows:
+        type: integer
+      outboxRetentionDays:
+        type: integer
+      password:
+        type: string
+      passwordAction:
+        $ref: '#/definitions/mqtt.SecretAction'
+      protocolVersion:
+        type: string
+      rawPublishIntervalMs:
+        type: integer
+      reconnectMaxMs:
+        type: integer
+      reconnectMinMs:
+        type: integer
+      tlsEnabled:
+        type: boolean
+      topicPrefix:
+        type: string
+      username:
         type: string
     type: object
   notification.ApiEnvelope:
@@ -3468,6 +3543,174 @@ paths:
       summary: 设备当前状态详情
       tags:
       - 设备采集
+  /api/v1/mqtt/commands:
+    get:
+      parameters:
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页条数
+        in: query
+        name: pageSize
+        type: integer
+      - description: 命令状态
+        in: query
+        name: status
+        type: string
+      - description: 设备外部 ID
+        in: query
+        name: deviceId
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 分页查询 MQTT command journal
+      tags:
+      - MQTT 管理
+  /api/v1/mqtt/commands/{commandId}:
+    get:
+      parameters:
+      - description: commandId
+        in: path
+        name: commandId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 查看 MQTT command journal 详情
+      tags:
+      - MQTT 管理
+  /api/v1/mqtt/config:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 获取 MQTT 配置
+      tags:
+      - MQTT 管理
+    put:
+      parameters:
+      - description: MQTT 配置；secret 使用 keep/set/clear
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/mqtt.configRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 更新 MQTT 配置
+      tags:
+      - MQTT 管理
+  /api/v1/mqtt/outbox/stats:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 获取 MQTT outbox 健康统计
+      tags:
+      - MQTT 管理
+  /api/v1/mqtt/state:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 获取 MQTT runtime 状态
+      tags:
+      - MQTT 管理
+  /api/v1/mqtt/test-connection:
+    post:
+      description: 可选提交完整配置；不提交 body 时测试当前已保存配置。该操作不改变正式 MQTT runtime。
+      parameters:
+      - description: 可选的待测试 MQTT 配置
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/mqtt.configRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/mqtt.ApiEnvelope'
+      security:
+      - BearerAuth: []
+      summary: 测试 MQTT 连接
+      tags:
+      - MQTT 管理
 securityDefinitions:
   BearerAuth:
     in: header

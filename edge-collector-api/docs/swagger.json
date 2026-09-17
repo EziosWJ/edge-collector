@@ -4697,6 +4697,280 @@
                     }
                 }
             }
+        },
+        "/api/v1/mqtt/commands": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "MQTT 管理"
+                ],
+                "summary": "分页查询 MQTT command journal",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页条数",
+                        "name": "pageSize",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "命令状态",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "设备外部 ID",
+                        "name": "deviceId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mqtt/commands/{commandId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "MQTT 管理"
+                ],
+                "summary": "查看 MQTT command journal 详情",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "commandId",
+                        "name": "commandId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mqtt/config": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "MQTT 管理"
+                ],
+                "summary": "获取 MQTT 配置",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "MQTT 管理"
+                ],
+                "summary": "更新 MQTT 配置",
+                "parameters": [
+                    {
+                        "description": "MQTT 配置；secret 使用 keep/set/clear",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.configRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mqtt/outbox/stats": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "MQTT 管理"
+                ],
+                "summary": "获取 MQTT outbox 健康统计",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mqtt/state": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "MQTT 管理"
+                ],
+                "summary": "获取 MQTT runtime 状态",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mqtt/test-connection": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "可选提交完整配置；不提交 body 时测试当前已保存配置。该操作不改变正式 MQTT runtime。",
+                "tags": [
+                    "MQTT 管理"
+                ],
+                "summary": "测试 MQTT 连接",
+                "parameters": [
+                    {
+                        "description": "可选的待测试 MQTT 配置",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.configRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/mqtt.ApiEnvelope"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -4746,6 +5020,9 @@
                 },
                 "enabled": {
                     "type": "integer"
+                },
+                "externalId": {
+                    "type": "string"
                 },
                 "failureThreshold": {
                     "type": "integer"
@@ -5242,6 +5519,114 @@
                 },
                 "data": {},
                 "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "mqtt.ApiEnvelope": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "data": {},
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "mqtt.SecretAction": {
+            "type": "string",
+            "enum": [
+                "keep",
+                "set",
+                "clear"
+            ],
+            "x-enum-varnames": [
+                "SecretKeep",
+                "SecretSet",
+                "SecretClear"
+            ]
+        },
+        "mqtt.configRequest": {
+            "type": "object",
+            "properties": {
+                "brokerUrl": {
+                    "type": "string"
+                },
+                "caCertificate": {
+                    "type": "string"
+                },
+                "clientCertificate": {
+                    "type": "string"
+                },
+                "clientId": {
+                    "type": "string"
+                },
+                "clientPrivateKey": {
+                    "type": "string"
+                },
+                "clientPrivateKeyAction": {
+                    "$ref": "#/definitions/mqtt.SecretAction"
+                },
+                "commandJournalMaxRows": {
+                    "type": "integer"
+                },
+                "commandJournalRetentionDays": {
+                    "type": "integer"
+                },
+                "commandPollFairness": {
+                    "type": "integer"
+                },
+                "commandQueueCapacity": {
+                    "type": "integer"
+                },
+                "connectTimeoutMs": {
+                    "type": "integer"
+                },
+                "edgeId": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "keepAliveSeconds": {
+                    "type": "integer"
+                },
+                "outboxMaxBytes": {
+                    "type": "integer"
+                },
+                "outboxMaxRows": {
+                    "type": "integer"
+                },
+                "outboxRetentionDays": {
+                    "type": "integer"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "passwordAction": {
+                    "$ref": "#/definitions/mqtt.SecretAction"
+                },
+                "protocolVersion": {
+                    "type": "string"
+                },
+                "rawPublishIntervalMs": {
+                    "type": "integer"
+                },
+                "reconnectMaxMs": {
+                    "type": "integer"
+                },
+                "reconnectMinMs": {
+                    "type": "integer"
+                },
+                "tlsEnabled": {
+                    "type": "boolean"
+                },
+                "topicPrefix": {
+                    "type": "string"
+                },
+                "username": {
                     "type": "string"
                 }
             }

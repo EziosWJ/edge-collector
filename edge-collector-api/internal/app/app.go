@@ -15,6 +15,7 @@ import (
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/dictionary"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/filemgmt"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/logmgmt"
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/mqtt"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/notification"
 	platformhttp "github.com/EziosWJ/edge-collector/edge-collector-api/internal/platform/http"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/rbac"
@@ -37,6 +38,7 @@ type Dependencies struct {
 	File             *filemgmt.Service
 	Log              *logmgmt.Service
 	Notification     *notification.Service
+	MQTT             mqtt.HandlerService
 }
 
 // Application is the assembled HTTP application and its process logger.
@@ -151,6 +153,16 @@ func New(cfg config.Config, readiness platformhttp.ReadinessChecker, deps Depend
 		acquisitionGroup := router.Group("/api/v1/acquisition")
 		acquisitionGroup.Use(auth.BearerMiddleware(deps.Auth))
 		acquisition.RegisterRoutes(acquisitionGroup, acquisitionHandler)
+	}
+
+	if deps.MQTT != nil {
+		mqttHandler, err := mqtt.NewHandler(deps.MQTT)
+		if err != nil {
+			return nil, fmt.Errorf("create MQTT handler: %w", err)
+		}
+		mqttGroup := router.Group("/api/v1/mqtt")
+		mqttGroup.Use(auth.BearerMiddleware(deps.Auth))
+		mqtt.RegisterRoutes(mqttGroup, mqttHandler)
 	}
 
 	if cfg.Environment == config.EnvironmentDev && cfg.Swagger.Enabled {

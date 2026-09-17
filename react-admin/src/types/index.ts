@@ -168,3 +168,23 @@ export type {
   UserStatusRequest,
   UserUpdateRequest,
 } from "./user";
+export type {
+  MqttCommandJournal,
+  MqttCommandListQuery,
+  MqttCommandPage,
+  MqttCommandStatus,
+  MqttConfig,
+  MqttConfigUpdateRequest,
+  MqttOutboxStats,
+  MqttProtocolVersion,
+  MqttRuntimeState,
+  MqttRuntimeStatus,
+  MqttStatusMeta,
+  MqttStatusTone,
+  MqttSecretAction,
+  MqttTestConnectionResult,
+} from "./mqtt";
+export {
+  mqttCommandStatusMeta,
+  mqttRuntimeStatusMeta,
+} from "./mqtt";

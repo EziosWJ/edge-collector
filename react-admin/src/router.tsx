@@ -6,6 +6,7 @@ import { AcquisitionChannelsPage } from "@/pages/acquisition/channels";
 import { AcquisitionDevicesPage } from "@/pages/acquisition/devices";
 import { AcquisitionRealtimePage } from "@/pages/acquisition/realtime";
 import { AcquisitionScriptsPage } from "@/pages/acquisition/scripts";
+import { MqttManagementPage } from "@/pages/mqtt";
 import { ChangePasswordPage } from "@/pages/change-password";
 import { DashboardPage } from "@/pages/dashboard";
 import { DetailDemoPage } from "@/pages/examples/detail-demo";
@@ -101,6 +102,10 @@ export const router = createBrowserRouter([
       {
         path: "acquisition/realtime",
         element: <AcquisitionRealtimePage />,
+      },
+      {
+        path: "mqtt",
+        element: <MqttManagementPage />,
       },
       {
         path: "system/dept",

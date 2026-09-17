@@ -63,6 +63,11 @@ export const defaultNavItems: NavItem[] = [
       },
     ],
   },
+  {
+    label: "MQTT 管理",
+    path: "/mqtt",
+    icon: RadioTower,
+  },
 
   {
     label: "页面示例",
@@ -232,6 +237,7 @@ export const staticRouteTitleMap: Record<string, string> = {
   "/acquisition/device": "设备管理",
   "/acquisition/script": "协议脚本",
   "/acquisition/realtime": "实时寄存器",
+  "/mqtt": "MQTT 管理",
   "/system/user": "用户管理",
   "/system/dept": "部门管理",
   "/system/dict": "字典管理",

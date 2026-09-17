@@ -169,6 +169,33 @@ type OutboxStats struct {
 	LastError *string    `json:"lastError"`
 }
 
+// OutboxStatsView is the management projection of durable outbox health. Age
+// is expressed in whole seconds so the HTTP contract remains an ordinary JSON
+// scalar and does not expose database implementation details.
+type OutboxStatsView struct {
+	Rows            int64   `json:"rows"`
+	Bytes           int64   `json:"bytes"`
+	OldestAge       int64   `json:"oldestAge"`
+	LastError       *string `json:"lastError,omitempty"`
+	MaxRows         int     `json:"maxRows"`
+	MaxBytes        int64   `json:"maxBytes"`
+	RowUtilization  float64 `json:"rowUtilization"`
+	ByteUtilization float64 `json:"byteUtilization"`
+}
+
+// RuntimeStateView combines the connector state with the latest-state and
+// durable outbox health needed by the management page.
+type RuntimeStateView struct {
+	RuntimeSnapshot
+	PendingLatestCount int             `json:"pendingLatestCount"`
+	Outbox             OutboxStatsView `json:"outbox"`
+}
+
+type TestConnectionView struct {
+	Success          bool `json:"success"`
+	RuntimeConnected bool `json:"runtimeConnected"`
+}
+
 type FinalReservation struct {
 	CommandID     string    `gorm:"column:command_id;primaryKey"`
 	ReservedRows  int       `gorm:"column:reserved_rows"`
