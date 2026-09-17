@@ -12,7 +12,6 @@ channels:
     devices:
       - devices/feeder_protector_01.yaml
       - devices/feeder_protector_02.yaml
-      - devices/time_registers_03.yaml
   - name: rtu1
     protocol: rtu
     alias: /tmp/modbus-rtu1
@@ -22,6 +21,15 @@ channels:
     stopbits: 1
     devices:
       - devices/feeder_protector_01.yaml
+  - name: rtc0
+    protocol: rtu
+    alias: /tmp/modbus-rtc0
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    devices:
+      - devices/time_registers_03.yaml
   # Go 业务采集暂不支持下列网络模式；复用开发映射做传输测试。
   - name: tcp0
     protocol: tcp
