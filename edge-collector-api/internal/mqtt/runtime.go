@@ -173,18 +173,22 @@ func (r *Runtime) applyConfig(parent context.Context) {
 		return
 	}
 	if config.Enabled == 0 {
+		// Invalidate callbacks from the old client before closing it. Some MQTT
+		// clients report a final disconnect asynchronously, and that callback
+		// must not turn a committed DISABLED state back into RECONNECTING.
+		r.mu.Lock()
+		r.generation++
+		r.config = config
+		r.transport = nil
+		r.transportCancel = nil
+		r.state = RuntimeSnapshot{State: RuntimeStateDisabled}
+		r.mu.Unlock()
 		if oldCancel != nil {
 			oldCancel()
 		}
 		if oldTransport != nil {
 			_ = oldTransport.Close()
 		}
-		r.mu.Lock()
-		r.config = config
-		r.transport = nil
-		r.transportCancel = nil
-		r.state = RuntimeSnapshot{State: RuntimeStateDisabled}
-		r.mu.Unlock()
 		return
 	}
 	if oldTransport != nil && reflect.DeepEqual(oldConfig, config) && oldState != RuntimeStateError {

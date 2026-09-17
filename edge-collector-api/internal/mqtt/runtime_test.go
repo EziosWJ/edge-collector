@@ -52,6 +52,7 @@ func TestRuntimeRestoresSubscriptionAndHonorsDisabledConfig(t *testing.T) {
 	}
 	input = configInput(current)
 	input.Enabled = false
+	fake.closeCallsDisconnected = true
 	if _, err := repository.SaveConfig(ctx, input, auditEventForTest()); err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +60,10 @@ func TestRuntimeRestoresSubscriptionAndHonorsDisabledConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return runtime.State().State == RuntimeStateDisabled })
+	time.Sleep(50 * time.Millisecond)
+	if state := runtime.State(); state.State != RuntimeStateDisabled || state.Connected {
+		t.Fatalf("runtime state after stale disconnect callback = %#v", state)
+	}
 	cancel()
 	select {
 	case <-done:
@@ -130,11 +135,12 @@ func TestRuntimeRebuildsTransportAfterSubscriptionError(t *testing.T) {
 }
 
 type testTransport struct {
-	mu            sync.Mutex
-	callbacks     TransportCallbacks
-	subscriptions []string
-	subscribeErr  error
-	closed        bool
+	mu                     sync.Mutex
+	callbacks              TransportCallbacks
+	subscriptions          []string
+	subscribeErr           error
+	closed                 bool
+	closeCallsDisconnected bool
 }
 
 func (t *testTransport) Publish(context.Context, Publication) error { return nil }
@@ -150,7 +156,12 @@ func (t *testTransport) Subscribe(_ context.Context, topic string, _ byte) error
 func (t *testTransport) Close() error {
 	t.mu.Lock()
 	t.closed = true
+	callback := t.callbacks.OnDisconnected
+	callCallback := t.closeCallsDisconnected
 	t.mu.Unlock()
+	if callCallback && callback != nil {
+		callback(nil)
+	}
 	return nil
 }
 
