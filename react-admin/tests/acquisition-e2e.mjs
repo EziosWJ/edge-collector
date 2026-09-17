@@ -129,23 +129,25 @@ async function apiJSON(pathname, token, options = {}) {
 
 async function waitForAcquisition(token, deviceCount, channelIDs) {
   const deadline = Date.now() + 45000;
+  let latestStates = [];
+  let latestChannels = [];
   while (Date.now() < deadline) {
-    const [states, channels] = await Promise.all([
+    [latestStates, latestChannels] = await Promise.all([
       apiJSON("/api/v1/acquisition/states", token),
       apiJSON("/api/v1/acquisition/channel-state", token),
     ]);
-    const selectedChannels = channels.filter((channel) => channelIDs.includes(channel.channelId));
+    const selectedChannels = latestChannels.filter((channel) => channelIDs.includes(channel.channelId));
     if (
-      states.length === deviceCount &&
-      states.every((state) => state.status === "ONLINE" && state.registerBlocks.length === 2 && state.registerBlocks.every((block) => block.valid)) &&
+      latestStates.length === deviceCount &&
+      latestStates.every((state) => state.status === "ONLINE" && state.registerBlocks.length === 2 && state.registerBlocks.every((block) => block.valid)) &&
       selectedChannels.length === channelIDs.length &&
       selectedChannels.every((channel) => channel.status === "ONLINE")
     ) {
-      return { states, channels };
+      return { states: latestStates, channels: latestChannels };
     }
     await delay(250);
   }
-  throw new Error("四协议设备未在期限内全部 ONLINE");
+  throw new Error(`四协议设备未在期限内全部 ONLINE: ${JSON.stringify({ states: latestStates, channels: latestChannels })}`);
 }
 
 function devicePayload(device, port = device.networkEndpoint?.port) {
@@ -171,7 +173,7 @@ function devicePayload(device, port = device.networkEndpoint?.port) {
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "edge-collector-adr0015-e2e-"));
 const environment = {
-  APP_ENV: "dev",
+  APP_ENV: "test",
   APP_CONFIG_PROFILE: "sqlite",
   APP_DATABASE__URL: path.join(tempRoot, "e2e.db"),
   APP_FILE__STORAGE_ROOT: path.join(tempRoot, "uploads"),

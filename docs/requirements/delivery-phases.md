@@ -209,7 +209,7 @@ React 管理后台采用“设备列表 + 当前数据详情”的基本形态�
 - 控制结果反馈；
 - MQTT 断线重连及必要的消息可靠性策略。
 
-第三阶段的接口约束已经由 ADR-0017 提前完成设计：第一版使用单逻辑 Broker、默认 MQTT 5 且保持 MQTT 3.1.1 应用层兼容；固定 raw/status/event/command/command-result Topic/Payload v1、QoS/retain、latest-state raw、bounded reliable outbox、command journal 和 Starlark `command(ctx,name,args)` safe-boundary 控制语义。该设计已接受，但实现仍以 GitHub Spec #39 及 #40～#47 为待交付工作。
+第三阶段的接口约束已经由 ADR-0017 固定并完成实现：第一版使用单逻辑 Broker、默认 MQTT 5 且保持 MQTT 3.1.1 应用层兼容；固定 raw/status/event/command/command-result Topic/Payload v1、QoS/retain、latest-state raw、bounded reliable outbox、command journal 和 Starlark `command(ctx,name,args)` safe-boundary 控制语义。实现对应 GitHub Spec #39 及 #40～#47；真实 Docker Broker/PostgreSQL 验收记录见 `docs/acceptance/adr-0017-mqtt-reliable-control.md`。
 
 ---
 
@@ -235,7 +235,7 @@ React 管理后台采用“设备列表 + 当前数据详情”的基本形态�
 
 当前已确认交付的采集能力还包括 ADR-0016 用户可配置 Starlark 动态事务：脚本 draft、Validate、不可变 Publish/Rollback、设备绑定、`after_poll(ctx)`、受控 FC03/FC16/FC05、delay、state/event overlay 以及独立运行观察。固定 `registerBlocks` 仍负责基础采集，脚本不接管 transport、session 或 channel 调度。
 
-ADR-0017 已完成 MQTT 第三阶段的架构与 Implementation Spec 设计，并创建 GitHub Spec #39 / 实现票 #40～#47；MQTT Client、raw/status/event 实际上报、reliable outbox、command journal、Starlark `command(ctx,name,args)`、远程控制和 MQTT 管理页面目前仍属于待实现能力，不能视为已交付。
+ADR-0017 已完成 MQTT 第三阶段的架构、Implementation Spec 和 #40～#47 实现；MQTT Client、raw/status/event 实际上报、reliable outbox、command journal、Starlark `command(ctx,name,args)`、远程控制和 MQTT 管理页面已交付。真实 Broker、PostgreSQL、MQTT 5/3.1.1 全矩阵需要 Docker daemon，当前执行环境的阻塞项记录在验收文档中。
 
 后续仍需正式业务告警模型与历史、`telemetry`/`alarm` 业务语义、Modbus Server、工程量解析以及生产化压力和 RK3568 部署完善。ADR-0016 dynamic event 不等同于业务告警；ADR-0017 第一版 raw/event 也不等同于正式 telemetry/alarm domain。
 

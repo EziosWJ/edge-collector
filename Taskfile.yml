@@ -164,6 +164,35 @@ tasks:
     cmds:
       - npm run test:znck-i-runtime-e2e
 
+  simulator:test:
+    desc: Validate the Modbus simulator fixture and run its protocol tests
+    dir: modbus-simulator
+    env:
+      UV_CACHE_DIR: /tmp/edge-collector-uv-cache
+    cmds:
+      - uv sync --locked
+      - uv run modbus-simulator --check-config --config config/simulator.yaml
+      - uv run modbus-simulator --check-config --config config/adr0017-mqtt-e2e.yaml
+      - uv run python -m unittest discover -s tests -v
+
+  mqtt:e2e:sqlite:
+    desc: Run ADR-0017 real Mosquitto + Modbus simulator E2E on SQLite (MQTT 5 and 3.1.1)
+    cmds:
+      - MQTT_E2E_REQUIRED=1 MQTT_E2E_DATABASE=sqlite MQTT_E2E_PROTOCOL=MQTT_5 node scripts/adr0017-mqtt-e2e.mjs
+      - MQTT_E2E_REQUIRED=1 MQTT_E2E_DATABASE=sqlite MQTT_E2E_PROTOCOL=MQTT_3_1_1 node scripts/adr0017-mqtt-e2e.mjs
+
+  mqtt:e2e:postgres:
+    desc: Run ADR-0017 real Mosquitto + Modbus simulator E2E on PostgreSQL (MQTT 5 and 3.1.1)
+    cmds:
+      - MQTT_E2E_REQUIRED=1 MQTT_E2E_DATABASE=postgres MQTT_E2E_PROTOCOL=MQTT_5 node scripts/adr0017-mqtt-e2e.mjs
+      - MQTT_E2E_REQUIRED=1 MQTT_E2E_DATABASE=postgres MQTT_E2E_PROTOCOL=MQTT_3_1_1 node scripts/adr0017-mqtt-e2e.mjs
+
+  mqtt:integration:
+    desc: Run the complete ADR-0017 real Broker + Modbus simulator matrix
+    cmds:
+      - task mqtt:e2e:sqlite
+      - task mqtt:e2e:postgres
+
   check:
     desc: Run backend and frontend checks
     deps:

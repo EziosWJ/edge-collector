@@ -9,4 +9,4 @@
 - [ADR-0017 MQTT 上下行、可靠消息与 Starlark 远程控制](../adr/0017-mqtt-uplink-downlink-reliable-control.md)
 - [MQTT 上下行、可靠消息与 Starlark 远程控制 Implementation Spec](../specs/mqtt-uplink-downlink-reliable-control.md)
 
-第一阶段正式 Spec 见 GitHub Issue #1；ADR-0016 已完成实现与验收。MQTT 第三阶段的 Topic/Payload/QoS、可靠 outbox、command journal 与 Starlark `command(ctx,name,args)` 已由 ADR-0017 / Issue #39 固定设计边界，目前处于待实现状态。关键架构决策见 ADR-0011、ADR-0013、ADR-0014、ADR-0015、ADR-0016 与 ADR-0017；技术方案见 `docs/design/phase-1-acquisition-technical-design.md`。
+第一阶段正式 Spec 见 GitHub Issue #1；ADR-0016 已完成实现与验收。MQTT 第三阶段的 Topic/Payload/QoS、可靠 outbox、command journal、Starlark `command(ctx,name,args)` 与管理面已按 ADR-0017 / Issue #39 及 #40～#47 实现；真实 Docker Broker/PostgreSQL 矩阵的执行记录见 [`docs/acceptance/adr-0017-mqtt-reliable-control.md`](../acceptance/adr-0017-mqtt-reliable-control.md)。关键架构决策见 ADR-0011、ADR-0013、ADR-0014、ADR-0015、ADR-0016 与 ADR-0017；技术方案见 `docs/design/phase-1-acquisition-technical-design.md`。

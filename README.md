@@ -16,7 +16,7 @@
 - 作为 Modbus Server 向其他设备或系统提供指定数据；
 - 不同设备的寄存器布局、告警查询流程和控制逻辑允许独立适配。
 
-> 采集底座和 ADR-0016 Starlark 动态事务已在现有四种 Modbus transport 上落地；业务告警、MQTT 上报/控制、Modbus Server 与控制专用 UI 仍按后续阶段推进。
+> 采集底座、ADR-0016 Starlark 动态事务和 ADR-0017 MQTT 上报/控制已在现有四种 Modbus transport 上落地；正式业务告警、Modbus Server、生产化压力验证与部署完善仍按后续阶段推进。
 
 正式需求基线：[`docs/requirements/edge-collector-requirements.md`](docs/requirements/edge-collector-requirements.md)
 

@@ -1,0 +1,17 @@
+# ADR-0017 real MQTT E2E fixture. The rtc_clock device gives the test a
+# deterministic FC16 write and a raw FC03 block at addresses 100..102.
+# Values are raw registers; they do not carry business-unit semantics.
+logging:
+  level: INFO
+  hex: false
+
+channels:
+  - name: adr0017-mqtt-rtu
+    protocol: rtu
+    alias: /tmp/edge-collector-adr0017-mqtt-rtu
+    baudrate: 9600
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    devices:
+      - devices/time_registers_03.yaml
