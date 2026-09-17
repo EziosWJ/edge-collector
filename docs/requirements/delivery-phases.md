@@ -209,7 +209,7 @@ React 管理后台采用“设备列表 + 当前数据详情”的基本形态�
 - 控制结果反馈；
 - MQTT 断线重连及必要的消息可靠性策略。
 
-这一阶段再正式确定 Topic、Payload、QoS、断线补发等接口约束。
+第三阶段的接口约束已经由 ADR-0017 提前完成设计：第一版使用单逻辑 Broker、默认 MQTT 5 且保持 MQTT 3.1.1 应用层兼容；固定 raw/status/event/command/command-result Topic/Payload v1、QoS/retain、latest-state raw、bounded reliable outbox、command journal 和 Starlark `command(ctx,name,args)` safe-boundary 控制语义。该设计已接受，但实现仍以 GitHub Spec #39 及 #40～#47 为待交付工作。
 
 ---
 
@@ -235,6 +235,8 @@ React 管理后台采用“设备列表 + 当前数据详情”的基本形态�
 
 当前已确认交付的采集能力还包括 ADR-0016 用户可配置 Starlark 动态事务：脚本 draft、Validate、不可变 Publish/Rollback、设备绑定、`after_poll(ctx)`、受控 FC03/FC16/FC05、delay、state/event overlay 以及独立运行观察。固定 `registerBlocks` 仍负责基础采集，脚本不接管 transport、session 或 channel 调度。
 
-后续阶段仍负责业务告警模型与历史、MQTT 上报和远程控制、控制专用 UI、Modbus Server、工程量解析以及生产化压力和 RK3568 部署完善。动态事件不等同于业务告警，脚本的 FC05/FC16 能力也不等同于远程控制业务。
+ADR-0017 已完成 MQTT 第三阶段的架构与 Implementation Spec 设计，并创建 GitHub Spec #39 / 实现票 #40～#47；MQTT Client、raw/status/event 实际上报、reliable outbox、command journal、Starlark `command(ctx,name,args)`、远程控制和 MQTT 管理页面目前仍属于待实现能力，不能视为已交付。
 
-第一阶段关键决策见 `docs/adr/0011-phase-one-rs485-modbus-rtu-acquisition.md`、`docs/adr/0013-rs485-request-pacing-and-runtime-reconfiguration.md` 和 `docs/adr/0014-raw-register-acquisition-before-protocol-parsing.md`；四传输底座见 `docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md`，动态事务见 `docs/adr/0016-user-configurable-starlark-modbus-dynamic-transactions.md`。
+后续仍需正式业务告警模型与历史、`telemetry`/`alarm` 业务语义、Modbus Server、工程量解析以及生产化压力和 RK3568 部署完善。ADR-0016 dynamic event 不等同于业务告警；ADR-0017 第一版 raw/event 也不等同于正式 telemetry/alarm domain。
+
+第一阶段关键决策见 `docs/adr/0011-phase-one-rs485-modbus-rtu-acquisition.md`、`docs/adr/0013-rs485-request-pacing-and-runtime-reconfiguration.md` 和 `docs/adr/0014-raw-register-acquisition-before-protocol-parsing.md`；四传输底座见 `docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md`，动态事务见 `docs/adr/0016-user-configurable-starlark-modbus-dynamic-transactions.md`，MQTT 上下行设计见 `docs/adr/0017-mqtt-uplink-downlink-reliable-control.md` 与 `docs/specs/mqtt-uplink-downlink-reliable-control.md`。
