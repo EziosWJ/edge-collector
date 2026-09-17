@@ -10,7 +10,7 @@
 - **仓库类型**: monorepo
 - **交流 / 输出语言**: 中文
 - **项目定位**: 面向工业现场边缘设备的数据采集与协议接入项目；采用 monorepo，包含 React 管理后台与 Go 后端，业务代码统一在 `edge-collector-api/` 演进。
-- **当前后端事实**: `edge-collector-api/` 是可运行的 Go 后端（Gin、配置、PostgreSQL/SQLite 连接池、Goose、统一响应、CORS、可观测性与 Swagger），PostgreSQL 是默认数据库，SQLite 支持单 API 实例使用本地持久文件。已迁移认证、角色、菜单、部门、用户、字典、系统配置、本地文件管理、日志管理和站内通知接口。文件内容存于配置的本地根目录（开发 Compose 使用持久化 Volume），数据库仅保存元数据和相对路径；删除保持元数据软删，不删除物理内容。所有管理模块的成功写操作写入操作审计日志；登录日志与操作日志的查询、详情与清空接口已迁移，清空受 `system.log-clear-enabled` 配置门控，操作日志查询通过 LEFT JOIN sys_user 回填 operator_name。站内通知支持 ADMIN 发布、用户分页查询和已读状态，用户角色集合实际变化时在同一事务写入角色变更通知。既有迁移接口和站内通知均有 PostgreSQL/SQLite 集成契约覆盖，Swagger 随实现同步生成。ADR-0016 用户可配置 Starlark 动态事务平台已落地：脚本 draft/version/binding 使用 PostgreSQL/SQLite 持久化，运行时在四种 Modbus transport 的现有 channel/session/pacing 边界内执行，服务端硬限制由 `acquisition.script.*` 配置控制，script state/event 与运行观察仅保存在进程内存。Java 参考后端 `base-api/` 已删除（可从 git 历史恢复）。
+- **当前后端事实**: `edge-collector-api/` 是可运行的 Go 后端（Gin、配置、PostgreSQL/SQLite 连接池、Goose、统一响应、CORS、可观测性与 Swagger），PostgreSQL 是默认数据库，SQLite 支持单 API 实例使用本地持久文件。已迁移认证、角色、菜单、部门、用户、字典、系统配置、本地文件管理、日志管理和站内通知接口。文件内容存于配置的本地根目录（开发 Compose 使用持久化 Volume），数据库仅保存元数据和相对路径；删除保持元数据软删，不删除物理内容。所有管理模块的成功写操作写入操作审计日志；登录日志与操作日志的查询、详情与清空接口已迁移，清空受 `system.log-clear-enabled` 配置门控，操作日志查询通过 LEFT JOIN sys_user 回填 operator_name。站内通知支持 ADMIN 发布、用户分页查询和已读状态，用户角色集合实际变化时在同一事务写入角色变更通知。既有迁移接口和站内通知均有 PostgreSQL/SQLite 集成契约覆盖，Swagger 随实现同步生成。ADR-0016 用户可配置 Starlark 动态事务平台已落地：脚本 draft/version/binding 使用 PostgreSQL/SQLite 持久化，运行时在四种 Modbus transport 的现有 channel/session/pacing 边界内执行，服务端硬限制由 `acquisition.script.*` 配置控制，script state/event 与运行观察仅保存在进程内存。ADR-0017 已接受 MQTT 上下行、可靠 outbox、command journal 与 Starlark `command(ctx,name,args)` 的设计，但 #40～#47 尚未实现，不能视为当前运行能力。Java 参考后端 `base-api/` 已删除（可从 git 历史恢复）。
 - **脚手架占位内容**: 脚手架里已出现大量"占位"示例（如 HelloWorld、UserTable、示例组件等），这些**不是真正的业务概念**，只是脚手架产物。真正的业务领域术语应来自后续的业务对话，而不是反向推导脚手架示例。
 
 ## 目录结构
@@ -44,14 +44,19 @@
 - **告警状态**：需要持续轮询检查、用于判断设备是否产生新告警的状态。
 - **告警详情**：告警触发后，按照具体设备协议进一步查询得到并需要即时上报的信息。
 - **控制指令**：上级平台通过 MQTT 下发、要求 Edge Collector 对目标设备执行的操作。
-- **MQTT 上报**：Edge Collector 作为 MQTT Client 向上级 Broker 发送实时数据、告警、设备状态或控制结果。
+- **MQTT 上报**：Edge Collector 作为 MQTT Client 向上级 Broker 发送 raw、事件、设备状态或控制结果；ADR-0017 第一版不把 raw/event 命名为正式 telemetry/alarm。
+- **MQTT latest-state**：不要求逐条离线补发、只关心最新当前值的 MQTT 数据路径。ADR-0017 中 raw snapshot 和 device current status 属于该类；raw 采用 per-device latest/coalesce，Broker 离线时不逐帧写 SQLite。
+- **可靠 Outbox**：用于 MQTT 离散可靠消息补发的有界持久队列。第一版用于 committed event 与 command result，QoS1 PUBACK 后删除；它不是 raw 历史数据库。
+- **Command Journal**：MQTT 控制命令的持久化幂等事实源，保存 `commandId`、payload hash、状态和最终结果；它与 Outbox 分工不同，前者防止重复执行，后者负责可靠发送。
+- **控制安全边界**：MQTT command 不在 MQTT callback 或当前 Modbus transaction 中直接执行，而是在当前完整 device cycle 结束后的 channel safe boundary 进入 Starlark `command(ctx,name,args)`；同通道保持串行，并必须保证普通 poll 不被永久饿死。
+- **可靠结果容量准入**：真实 command 进入 ACCEPTED/enqueue 前，必须保证 journal 可写且后续 FINAL result 有可靠 outbox 容量；容量不足时应在设备动作前拒绝，不能出现设备已动作但最终结果无法持久化。
 - **Modbus Server**：Edge Collector 面向其他设备或系统提供的 Modbus 数据服务，其对外地址不要求等同于现场设备原始寄存器地址。
 - **Modbus 模拟器**：供开发和协议联调用的纯软件 Modbus 设备，不代表真实厂家的寄存器表或设备语义；多传输 Modbus 阶段在真实厂家网络设备验收前以它作为正式开发验收基线。
 - **Modbus UDP (MBAP)**：每个 UDP Datagram 由 MBAP Header + Modbus PDU 组成、不带 RTU CRC 的网络传输方式，对应协议枚举 `MODBUS_UDP`。
 - **RTU over UDP**：把完整 `Slave + Function Code + Data + CRC16` Modbus RTU 帧作为单个 UDP Payload 传输的通信方式，对应协议枚举 `MODBUS_RTU_OVER_UDP`；它与 Modbus UDP (MBAP) 分开处理。
 - **PTY alias**：模拟器为动态 `/dev/pts/N` slave 维护的固定软链接，供 Go 采集程序使用。
 
-> 当前需求基线见 `docs/requirements/edge-collector-requirements.md`。设备 Driver、任务类型、缓存结构等尚未确认，不作为当前领域词汇预先写入。多传输 Modbus 通道、设备寻址与运行状态决策见 `docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md`；用户可配置动态事务见 `docs/adr/0016-user-configurable-starlark-modbus-dynamic-transactions.md` 和 `docs/specs/starlark-modbus-dynamic-transactions.md`。
+> 当前需求基线见 `docs/requirements/edge-collector-requirements.md`。设备 Driver、通用业务解析模型等尚未确认，不作为当前领域词汇预先写入。多传输 Modbus 通道、设备寻址与运行状态决策见 `docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md`；用户可配置动态事务见 `docs/adr/0016-user-configurable-starlark-modbus-dynamic-transactions.md` 和 `docs/specs/starlark-modbus-dynamic-transactions.md`；MQTT 上下行与远程控制设计见 `docs/adr/0017-mqtt-uplink-downlink-reliable-control.md` 和 `docs/specs/mqtt-uplink-downlink-reliable-control.md`。
 
 ## 技术栈与演进状态
 
@@ -74,9 +79,9 @@
 - CORS: 默认允许跨域 Bearer Token 请求且不启用 Cookie 凭据；可通过精确 `allowed_origins` 配置收紧来源范围，不使用允许凭据的通配来源。
 - 认证: 目标为 JWT 加数据库管理的动态角色和菜单关系；`ADMIN` 是内置角色，`admin`、`user` 只是角色示例。JWT 使用 HS256，密钥由运行配置提供，包含 `sub`、`jti`、`iat`、`exp` 并校验 `issuer`、`audience`，不包含角色或菜单。Gin middleware 首版只校验登录态，不按 `permissionCode` 拦截接口；会话持久化在所选数据库的 `auth_session` 表中，JWT `jti` 用于校验和登出即时撤销；不引入 Redis、Casbin、ABAC、多租户权限或组织树数据权限。
 - 可观测性: 使用 `log/slog` 记录 request_id、请求方法与路径、状态、耗时、user_id 和错误；`/health` 只检查进程存活，`/ready` 检查所选数据库并在不可用时返回 503，`/metrics` 不要求 JWT、仅通过内部网络或反向代理白名单供 Prometheus 抓取且不应用默认 CORS。业务审计日志须落库，不能由应用日志替代：middleware 将 request_id、IP、User-Agent 写入标准 `context.Context`，Service 显式记录审计，Repository 持久化；认证记录成功与失败登录，其他操作仅在业务成功后记录。
-- 其他目标组件: 本地文件系统加 Docker Volume（文件服务与存储实现解耦）、Excelize、Docker 与 Docker Compose；不提前引入 Kubernetes、OpenTelemetry tracing、Redis 分布式锁或微服务治理基础设施。Edge Collector 已确认需要作为 MQTT Client 与上级 Broker 通信；这里“不提前引入 MQ”仅指不为内部架构预设 RocketMQ/Kafka 等消息队列基础设施，不限制 MQTT 业务接入。Starlark 动态事务属于已确认的采集运行能力，不等同于业务告警、MQTT 上报或远程控制业务。
+- 其他目标组件: 本地文件系统加 Docker Volume（文件服务与存储实现解耦）、Excelize、Docker 与 Docker Compose；不提前引入 Kubernetes、OpenTelemetry tracing、Redis 分布式锁或微服务治理基础设施。Edge Collector 已确认需要作为 MQTT Client 与上级 Broker 通信；这里“不提前引入 MQ”仅指不为内部架构预设 RocketMQ/Kafka 等消息队列基础设施，不限制 MQTT 业务接入。Starlark 动态事务属于已确认的采集运行能力；ADR-0017 已确认 MQTT 的设计边界，但对应 runtime/outbox/journal/command 仍待 #40～#47 实现。
 
-通用架构取舍见 [ADR-0004](docs/adr/0004-backend-architecture-and-database-strategy.md)，SQLite 正式生产支持边界见 [ADR-0010](docs/adr/0010-sqlite-production-support.md)，多传输 Modbus 通道与网络设备寻址见 [ADR-0015](docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md)。
+通用架构取舍见 [ADR-0004](docs/adr/0004-backend-architecture-and-database-strategy.md)，SQLite 正式生产支持边界见 [ADR-0010](docs/adr/0010-sqlite-production-support.md)，多传输 Modbus 通道与网络设备寻址见 [ADR-0015](docs/adr/0015-multi-transport-modbus-channels-and-network-device-addressing.md)，Starlark 动态事务见 [ADR-0016](docs/adr/0016-user-configurable-starlark-modbus-dynamic-transactions.md)，MQTT 上下行设计见 [ADR-0017](docs/adr/0017-mqtt-uplink-downlink-reliable-control.md)。
 
 ## Go 后端架构约定（目标实现必须遵守）
 
@@ -139,7 +144,7 @@ edge-collector-api/
 
 ## 现状与目标差异
 
-- 采集底座已覆盖四种 Modbus transport 的固定 FC03/FC04 raw `registerBlocks` 轮询；ADR-0016 的 Starlark draft/Validate/Publish/Rollback、设备绑定、受控 `after_poll`、state/event overlay 和脚本运行观察也已实现。业务工程量解析、业务告警持久化/MQTT 上报、远程控制和控制专用 UI 仍属于后续阶段。
+- 采集底座已覆盖四种 Modbus transport 的固定 FC03/FC04 raw `registerBlocks` 轮询；ADR-0016 的 Starlark draft/Validate/Publish/Rollback、设备绑定、受控 `after_poll`、state/event overlay 和脚本运行观察也已实现。ADR-0017 已完成 MQTT 上下行与远程控制设计，但 MQTT Client、latest-state raw/status、reliable outbox、command journal、`command(ctx,name,args)`、远程控制和管理页面仍待 #40～#47 实现。业务工程量解析、正式 telemetry/alarm 和业务告警持久化仍属于后续阶段。
 - Go 服务已具备 Gin、GORM、Goose、Prometheus、`log/slog`、Koanf、Docker Compose、Swagger、JWT 会话认证、站内通知和 ADR-0016 Starlark 动态事务能力，并可执行格式化、测试与静态检查；Excelize 及其余业务模块仍按 Issue 顺序实施。
 - ADR-0002 规定的既有 `/api/**`、响应结构和 Bearer Token 外部契约已实现；与新接口 `/api/v1` 规范并存时，迁移兼容优先。
 
@@ -184,7 +189,17 @@ _Avoid_：全局搜索（容易被理解为包含业务数据的检索）
 
 **脚本运行状态**：独立于静态寄存器和设备通信状态的进程内观察数据，记录脚本版本、最近尝试/成功/错误及动态事件；服务重启、脚本版本或设备寻址身份切换时允许重置。
 
-**动态事件**：脚本通过 `ctx.emit_event` 产生的有界、可去重、JSON-compatible 运行时输出。本阶段不是业务告警历史，不承担 MQTT 上报、确认/恢复或消警生命周期。
+**动态事件**：脚本通过 `ctx.emit_event` 产生的有界、可去重、JSON-compatible 运行时输出。当前已实现阶段不是业务告警历史；ADR-0017 设计为将成功提交的动态事件投影到 reliable MQTT event，但在 #43 实现前仍不承担实际 MQTT 上报。
+
+### MQTT 上下行（ADR-0017 已设计，待实现）
+
+**Raw Snapshot 上报**：设备完整 poll cycle 后由 CurrentState 投影的 `raw-register-snapshot/v1`；保持 block validity 和 last-known value 语义，不进行业务解析。
+
+**MQTT Command**：上级平台发布的 `device-command/v1`，包含 `commandId`、`deviceId`、`name`、`args`、`issuedAt`、`expiresAt`；平台负责 schema/expiry/dedupe/admission，Starlark 不负责 commandId/journal。
+
+**Command Result**：控制命令的 MQTT 反馈，区分 ACCEPTED 与最终 SUCCEEDED/FAILED；最终结果必须进入可靠持久化路径。
+
+**Last Will 时间语义**：LWT payload 在 CONNECT 时预注册，因此其中时间只表示 Will 生成/会话建立时刻，不等于真实断线发生时间；上级需要 offline observed time 时以 Broker 接收 Will 的时间为准。
 
 | 术语 | 同义词 / 禁用词 | 定义 |
 | --- | --- | --- |
