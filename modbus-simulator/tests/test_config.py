@@ -12,10 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 class ConfigTest(unittest.TestCase):
     def test_default_mapping(self):
         config = load_config(ROOT / 'config/simulator.yaml')
-        self.assertEqual(len(config['channels']), 5)
-        self.assertEqual([d['slave_id'] for d in config['channels'][0]['devices']], [1, 2, 3])
-        time_device = config['channels'][0]['devices'][2]
+        self.assertEqual(len(config['channels']), 6)
+        self.assertEqual([d['slave_id'] for d in config['channels'][0]['devices']], [1, 2])
+        rtc = next(channel for channel in config['channels'] if channel['name'] == 'rtc0')
+        self.assertEqual(rtc['alias'], '/tmp/modbus-rtc0')
+        self.assertEqual([d['slave_id'] for d in rtc['devices']], [3])
+        time_device = rtc['devices'][0]
         self.assertEqual(time_device['name'], '时间寄存器测试设备-03')
+        self.assertEqual(time_device.get('fixture'), 'rtc_clock')
         self.assertEqual(
             [(register['area'], register['address'], register['value'])
              for register in time_device['registers']],
