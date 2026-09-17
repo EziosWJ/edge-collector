@@ -128,6 +128,7 @@ type Result struct {
 	ModbusOperations int
 	TotalDelayMs     int
 	PrintLines       int
+	Output           any
 	State            map[string]any
 	Events           []Event
 }
@@ -138,6 +139,7 @@ type CompiledScript struct {
 	version     ScriptVersion
 	checksum    string
 	sourceBytes int
+	hasCommand  bool
 	program     *starlark.Program
 }
 

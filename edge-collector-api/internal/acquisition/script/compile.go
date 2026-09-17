@@ -119,7 +119,8 @@ func compileVersion(version ScriptVersion, limits Limits) (*CompiledScript, erro
 	if err := validateSyntax(file); err != nil {
 		return nil, err
 	}
-	if err := validateEntrypoint(file); err != nil {
+	hasCommand, err := validateEntrypoints(file)
+	if err != nil {
 		return nil, err
 	}
 
@@ -138,6 +139,7 @@ func compileVersion(version ScriptVersion, limits Limits) (*CompiledScript, erro
 		version:     version,
 		checksum:    checksum,
 		sourceBytes: sourceBytes,
+		hasCommand:  hasCommand,
 		program:     program,
 	}, nil
 }
@@ -195,41 +197,73 @@ func validateSyntax(file *syntax.File) error {
 	return validationErr
 }
 
-func validateEntrypoint(file *syntax.File) error {
-	var entrypoint *syntax.DefStmt
-	var invalidBinding syntax.Node
+func validateEntrypoints(file *syntax.File) (bool, error) {
+	var afterPoll *syntax.DefStmt
+	var command *syntax.DefStmt
+	var invalidAfterPoll syntax.Node
+	var invalidCommand syntax.Node
 	for _, statement := range file.Stmts {
 		switch statement := statement.(type) {
 		case *syntax.DefStmt:
 			if statement.Name.Name == "after_poll" {
-				if entrypoint != nil {
-					return positionedCompileError(syntax.Start(statement), "after_poll must be defined exactly once")
+				if afterPoll != nil {
+					return false, positionedCompileError(syntax.Start(statement), "after_poll must be defined exactly once")
 				}
-				entrypoint = statement
+				afterPoll = statement
+			}
+			if statement.Name.Name == "command" {
+				if command != nil {
+					return false, positionedCompileError(syntax.Start(statement), "command must be defined at most once")
+				}
+				command = statement
 			}
 		case *syntax.AssignStmt:
-			if ident, ok := statement.LHS.(*syntax.Ident); ok && ident.Name == "after_poll" {
-				invalidBinding = ident
+			if ident, ok := statement.LHS.(*syntax.Ident); ok {
+				switch ident.Name {
+				case "after_poll":
+					invalidAfterPoll = ident
+				case "command":
+					invalidCommand = ident
+				}
 			}
 		}
 	}
 
-	if entrypoint == nil {
-		if invalidBinding != nil {
-			return positionedCompileError(syntax.Start(invalidBinding), "after_poll must be defined as def after_poll(ctx)")
+	if afterPoll == nil {
+		if invalidAfterPoll != nil {
+			return false, positionedCompileError(syntax.Start(invalidAfterPoll), "after_poll must be defined as def after_poll(ctx)")
 		}
-		return positionedCompileError(fileStart(file), "missing required entrypoint after_poll(ctx)")
+		return false, positionedCompileError(fileStart(file), "missing required entrypoint after_poll(ctx)")
 	}
-	if invalidBinding != nil {
-		return positionedCompileError(syntax.Start(invalidBinding), "after_poll must be defined as def after_poll(ctx)")
+	if invalidAfterPoll != nil {
+		return false, positionedCompileError(syntax.Start(invalidAfterPoll), "after_poll must be defined as def after_poll(ctx)")
 	}
-	if len(entrypoint.Params) != 1 {
-		return positionedCompileError(entrypoint.Lparen, "after_poll must accept exactly one ctx parameter")
+	if len(afterPoll.Params) != 1 {
+		return false, positionedCompileError(afterPoll.Lparen, "after_poll must accept exactly one ctx parameter")
 	}
-	if _, ok := entrypoint.Params[0].(*syntax.Ident); !ok {
-		return positionedCompileError(syntax.Start(entrypoint.Params[0]), "after_poll parameter must be a plain identifier")
+	if _, ok := afterPoll.Params[0].(*syntax.Ident); !ok {
+		return false, positionedCompileError(syntax.Start(afterPoll.Params[0]), "after_poll parameter must be a plain identifier")
 	}
-	return nil
+	if invalidCommand != nil {
+		return false, positionedCompileError(syntax.Start(invalidCommand), "command must be defined as def command(ctx, name, args)")
+	}
+	if command == nil {
+		return false, nil
+	}
+	if len(command.Params) != 3 {
+		return false, positionedCompileError(command.Lparen, "command must accept exactly three parameters: ctx, name, args")
+	}
+	for _, parameter := range command.Params {
+		if _, ok := parameter.(*syntax.Ident); !ok {
+			return false, positionedCompileError(syntax.Start(parameter), "command parameters must be plain identifiers")
+		}
+	}
+	return true, nil
+}
+
+func validateEntrypoint(file *syntax.File) error {
+	_, err := validateEntrypoints(file)
+	return err
 }
 
 func fileStart(file *syntax.File) syntax.Position {

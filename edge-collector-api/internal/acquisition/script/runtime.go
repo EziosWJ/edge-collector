@@ -107,6 +107,17 @@ func (r *Runtime) Compile(version ScriptVersion) (*CompiledScript, error) {
 	return compiled, nil
 }
 
+// CommandAvailable compiles the immutable source snapshot and reports whether
+// it exposes the optional command entrypoint. Compilation errors are returned
+// to the caller so intake can reject an unavailable target before queuing I/O.
+func (r *Runtime) CommandAvailable(version ScriptVersion) (bool, error) {
+	compiled, err := r.Compile(version)
+	if err != nil {
+		return false, err
+	}
+	return compiled.CommandAvailable(), nil
+}
+
 // Validate compiles source with this runtime's limits without adding it to
 // the published-program cache.
 func (r *Runtime) Validate(source string) error {
@@ -145,6 +156,30 @@ func (r *Runtime) Invoke(ctx context.Context, compiled *CompiledScript, invocati
 	return impl.invoke(ctx, compiled, invocation, host)
 }
 
+// InvokeCommand executes the optional command(ctx, name, args) entrypoint in
+// the same state scope as after_poll. The caller remains responsible for the
+// acquisition safe boundary; this method only crosses the Starlark/Host seam.
+func (r *Runtime) InvokeCommand(ctx context.Context, compiled *CompiledScript, invocation Invocation, host Host, name string, args any) (Result, error) {
+	impl := r.implementation()
+	if impl == nil {
+		return Result{}, newClassifiedError(ErrorClassScriptRuntime, "nil script runtime", nil)
+	}
+	if compiled == nil || compiled.program == nil {
+		return Result{}, newClassifiedError(ErrorClassScriptCompile, "nil compiled script", nil)
+	}
+	if !compiled.CommandAvailable() {
+		return Result{}, newClassifiedError(ErrorClassScriptCompile, "compiled script has no command entrypoint", nil)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	converted, err := JSONToStarlark(args)
+	if err != nil {
+		return Result{}, newClassifiedError(ErrorClassScriptOutput, "command arguments are not JSON-compatible: "+err.Error(), err)
+	}
+	return impl.invokeEntry(ctx, compiled, invocation, host, "command", starlark.Tuple{starlark.String(name), converted}, true)
+}
+
 // InvokeVersion compiles or obtains a cached program before invoking it.
 func (r *Runtime) InvokeVersion(ctx context.Context, version ScriptVersion, invocation Invocation, host Host) (Result, error) {
 	compiled, err := r.Compile(version)
@@ -157,6 +192,16 @@ func (r *Runtime) InvokeVersion(ctx context.Context, version ScriptVersion, invo
 // Execute is an alias with a verb suited to service adapters.
 func (r *Runtime) Execute(ctx context.Context, version ScriptVersion, invocation Invocation, host Host) (Result, error) {
 	return r.InvokeVersion(ctx, version, invocation, host)
+}
+
+// ExecuteCommand compiles a published version and executes its optional
+// command entrypoint.
+func (r *Runtime) ExecuteCommand(ctx context.Context, version ScriptVersion, invocation Invocation, host Host, name string, args any) (Result, error) {
+	compiled, err := r.Compile(version)
+	if err != nil {
+		return Result{}, err
+	}
+	return r.InvokeCommand(ctx, compiled, invocation, host, name, args)
 }
 
 // Snapshot returns defensive copies of the committed state and bounded event
@@ -178,6 +223,10 @@ func (r *Runtime) Reset(scope StateScope) {
 }
 
 func (impl *runtimeImplementation) invoke(ctx context.Context, compiled *CompiledScript, invocation Invocation, host Host) (Result, error) {
+	return impl.invokeEntry(ctx, compiled, invocation, host, "after_poll", nil, false)
+}
+
+func (impl *runtimeImplementation) invokeEntry(ctx context.Context, compiled *CompiledScript, invocation Invocation, host Host, entryName string, entryArgs starlark.Tuple, captureOutput bool) (Result, error) {
 	scope := StateScope{
 		DeviceID:        invocation.DeviceID,
 		ScriptID:        compiled.version.ScriptID,
@@ -261,13 +310,26 @@ func (impl *runtimeImplementation) invoke(ctx context.Context, compiled *Compile
 		}
 	}
 	if invocationErr == nil {
-		entrypoint, ok := globals["after_poll"]
+		entrypoint, ok := globals[entryName]
 		if !ok {
-			invocationErr = newClassifiedError(ErrorClassScriptCompile, "compiled script has no after_poll entrypoint", nil)
+			invocationErr = newClassifiedError(ErrorClassScriptCompile, "compiled script has no "+entryName+" entrypoint", nil)
 		} else if _, ok := entrypoint.(starlark.Callable); !ok {
-			invocationErr = newClassifiedError(ErrorClassScriptCompile, "after_poll is not callable", nil)
+			invocationErr = newClassifiedError(ErrorClassScriptCompile, entryName+" is not callable", nil)
 		} else {
-			_, invocationErr = starlark.Call(thread, entrypoint, starlark.Tuple{&contextValue{execution: execution}}, nil)
+			callArgs := starlark.Tuple{&contextValue{execution: execution}}
+			callArgs = append(callArgs, entryArgs...)
+			var returnValue starlark.Value
+			returnValue, invocationErr = starlark.Call(thread, entrypoint, callArgs, nil)
+			if invocationErr == nil && captureOutput {
+				resultOutput, outputErr := CommandOutput(returnValue)
+				if outputErr != nil {
+					invocationErr = newClassifiedError(ErrorClassScriptOutput, "command output is not JSON-compatible: "+outputErr.Error(), outputErr)
+				} else {
+					// The result is copied below after execution limits and context
+					// checks have completed; no output is exposed on a failed call.
+					execution.commandOutput = resultOutput
+				}
+			}
 		}
 	}
 
@@ -284,6 +346,7 @@ func (impl *runtimeImplementation) invoke(ctx context.Context, compiled *Compile
 		ModbusOperations: execution.counter.Count(),
 		TotalDelayMs:     execution.totalDelayMs,
 		PrintLines:       execution.printLines,
+		Output:           cloneCommandOutput(execution.commandOutput),
 	}
 	if parentErr != nil {
 		invocationErr = parentErr
@@ -383,4 +446,10 @@ func (c *CompiledScript) SourceBytes() int {
 		return 0
 	}
 	return c.sourceBytes
+}
+
+// CommandAvailable reports whether the immutable published program exposes
+// the optional remote-control entrypoint.
+func (c *CompiledScript) CommandAvailable() bool {
+	return c != nil && c.hasCommand
 }

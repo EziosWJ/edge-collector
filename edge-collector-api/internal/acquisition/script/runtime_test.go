@@ -234,6 +234,55 @@ func TestProgramCacheChecksumAndFreshGlobals(t *testing.T) {
 	}
 }
 
+func TestCommandEntrypointUsesSharedStateAndHostBoundary(t *testing.T) {
+	runtime := NewRuntime(Options{})
+	version := testVersion("state = 0\n\ndef after_poll(ctx):\n    ctx.state_set(\"last\", 1)\n\ndef command(ctx, name, args):\n    ctx.write_registers(10, [args[\"value\"]])\n    ctx.state_set(\"last\", name)\n    return {\"name\": name, \"args\": args}\n")
+	compiled, err := runtime.Compile(version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compiled.CommandAvailable() {
+		t.Fatal("CommandAvailable() = false")
+	}
+	host := new(testHost)
+	if _, err := runtime.Invoke(context.Background(), compiled, Invocation{DeviceID: 1, ChannelID: 2, UnitID: 3}, host); err != nil {
+		t.Fatalf("after_poll: %v", err)
+	}
+	result, err := runtime.InvokeCommand(context.Background(), compiled, Invocation{DeviceID: 1, ChannelID: 2, UnitID: 3}, host, "set_value", map[string]any{"value": int64(7)})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	if len(host.writes) != 1 || host.writes[0].address != 10 || len(host.writes[0].values) != 1 || host.writes[0].values[0] != 7 {
+		t.Fatalf("writes = %#v", host.writes)
+	}
+	output, ok := result.Output.(map[string]any)
+	if !ok || output["name"] != "set_value" {
+		t.Fatalf("command output = %#v", result.Output)
+	}
+	snapshot := runtime.Snapshot(StateScope{DeviceID: 1, ScriptID: version.ScriptID, ScriptVersionID: version.VersionID})
+	if snapshot.State["last"] != "set_value" {
+		t.Fatalf("shared state = %#v", snapshot.State)
+	}
+}
+
+func TestCommandEntrypointIsOptionalButStrictWhenPresent(t *testing.T) {
+	withoutCommand, err := CompileSource("def after_poll(ctx):\n    pass\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutCommand.CommandAvailable() {
+		t.Fatal("command should be optional")
+	}
+	for _, source := range []string{
+		"def after_poll(ctx):\n    pass\n\ndef command(ctx, name):\n    pass\n",
+		"def after_poll(ctx):\n    pass\n\ncommand = 1\n",
+	} {
+		if _, err := CompileSource(source); err == nil || !strings.Contains(err.Error(), "command") {
+			t.Fatalf("CompileSource(%q) error = %v", source, err)
+		}
+	}
+}
+
 func TestHostAPIStateEventAndPrint(t *testing.T) {
 	sink := new(testPrintSink)
 	at := time.Date(2026, 9, 16, 1, 2, 3, 0, time.UTC)

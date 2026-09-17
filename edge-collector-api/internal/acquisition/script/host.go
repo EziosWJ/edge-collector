@@ -11,19 +11,20 @@ import (
 )
 
 type invocationState struct {
-	ctx        context.Context
-	invocation Invocation
-	version    ScriptVersion
-	host       Host
-	limits     Limits
-	store      *stateStore
-	scope      StateScope
-	state      map[string]any
-	events     []Event
-	counter    ModbusOperationCounter
-	now        func() time.Time
-	hostTime   time.Time
-	printSink  PrintSink
+	ctx           context.Context
+	invocation    Invocation
+	version       ScriptVersion
+	host          Host
+	limits        Limits
+	store         *stateStore
+	scope         StateScope
+	state         map[string]any
+	events        []Event
+	counter       ModbusOperationCounter
+	now           func() time.Time
+	hostTime      time.Time
+	printSink     PrintSink
+	commandOutput any
 
 	totalDelayMs int
 	printLines   int

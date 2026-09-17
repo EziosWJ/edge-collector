@@ -32,6 +32,19 @@ type ScriptExecutor interface {
 	Execute(context.Context, script.ScriptVersion, script.Invocation, script.Host) (script.Result, error)
 }
 
+// ScriptCommandExecutor is the optional command entrypoint seam. The
+// acquisition runner supplies a Host only at a channel-safe boundary; MQTT
+// intake never receives or calls this interface directly.
+type ScriptCommandExecutor interface {
+	ExecuteCommand(context.Context, script.ScriptVersion, script.Invocation, script.Host, string, any) (script.Result, error)
+}
+
+type ScriptCommandCapability interface {
+	CommandAvailable(context.Context, script.ScriptVersion) (bool, error)
+}
+
+type ScriptEventSink func(context.Context, Device, ScriptVersion, []script.Event)
+
 // ScriptStateResetter is the state lifecycle part of script.Runtime. It is
 // optional for fakes that do not retain state.
 type ScriptStateResetter interface {
@@ -47,6 +60,7 @@ type ScriptStateSnapshotter interface {
 type RuntimeScriptConfig struct {
 	VersionProvider ScriptVersionProvider
 	Executor        ScriptExecutor
+	EventSink       ScriptEventSink
 }
 
 func newScriptHostError(operation string, err error) error {
@@ -94,6 +108,11 @@ type Runtime struct {
 	logger  *log.Logger
 	scripts RuntimeScriptConfig
 
+	runnersMu            sync.RWMutex
+	runners              map[int64]*channelRunner
+	commandQueueCapacity int
+	commandPollFairness  int
+
 	scriptStateMu sync.RWMutex
 	scriptStates  map[int64]ScriptRuntimeState
 
@@ -129,16 +148,19 @@ func newRuntime(channels []Channel, devices []Device, store *CurrentStateStore, 
 		loader = loaders[0]
 	}
 	return &Runtime{
-		channels:       cloneChannels(channels),
-		devices:        cloneDevices(devices),
-		scriptVersions: make(map[int64]ScriptVersion),
-		loader:         loader,
-		store:          store,
-		factory:        factory,
-		logger:         logger,
-		scripts:        scripts,
-		scriptStates:   make(map[int64]ScriptRuntimeState),
-		refreshCh:      make(chan configurationSnapshot, 1),
+		channels:             cloneChannels(channels),
+		devices:              cloneDevices(devices),
+		scriptVersions:       make(map[int64]ScriptVersion),
+		loader:               loader,
+		store:                store,
+		factory:              factory,
+		logger:               logger,
+		scripts:              scripts,
+		scriptStates:         make(map[int64]ScriptRuntimeState),
+		refreshCh:            make(chan configurationSnapshot, 1),
+		runners:              make(map[int64]*channelRunner),
+		commandQueueCapacity: 32,
+		commandPollFairness:  1,
 	}, nil
 }
 
@@ -374,6 +396,7 @@ func validateDynamicWrite(address uint16, values []uint16) error {
 
 type deviceCycleResult struct {
 	staticErr            error
+	staticReads          []RegisterBlockRead
 	scriptErr            error
 	scriptTransportError bool
 	scriptResult         script.Result
@@ -383,7 +406,7 @@ type deviceCycleResult struct {
 func (r *Runtime) executeDeviceCycle(ctx context.Context, channel Channel, device Device, session *pacedSession, stopOnError bool, cycle capturedScriptCycle) deviceCycleResult {
 	reads := make([]RegisterBlockRead, 0, len(device.RegisterBlocks))
 	staticErr := pollDeviceCycleWithReads(ctx, device, session, r.store, stopOnError, &reads)
-	result := deviceCycleResult{staticErr: staticErr}
+	result := deviceCycleResult{staticErr: staticErr, staticReads: append([]RegisterBlockRead(nil), reads...)}
 	if !cycle.enabled || cycle.executor == nil || ctx.Err() != nil {
 		return result
 	}
@@ -645,7 +668,6 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 	r.mu.Unlock()
 
-	var runners sync.Map
 	var runnerWait sync.WaitGroup
 	retryTicker := time.NewTicker(time.Second)
 	defer retryTicker.Stop()
@@ -655,27 +677,39 @@ func (r *Runtime) Run(ctx context.Context) error {
 		activeIDs := make(map[int64]struct{}, len(active))
 		for channelID, config := range active {
 			activeIDs[channelID] = struct{}{}
-			if existing, ok := runners.Load(channelID); ok {
-				existing.(*channelRunner).Update(config)
+			r.runnersMu.RLock()
+			existing := r.runners[channelID]
+			r.runnersMu.RUnlock()
+			if existing != nil {
+				existing.Update(config)
 				continue
 			}
 			runner := newChannelRunner(r, config)
-			runners.Store(channelID, runner)
+			r.runnersMu.Lock()
+			// A refresh cannot be applied concurrently by this coordinator, but
+			// keep the check here so a command submitter never sees a replaced
+			// runner as an orphan.
+			if currentRunner := r.runners[channelID]; currentRunner != nil {
+				r.runnersMu.Unlock()
+				currentRunner.Update(config)
+				continue
+			}
+			r.runners[channelID] = runner
+			r.runnersMu.Unlock()
 			runnerWait.Add(1)
 			go func(runner *channelRunner) {
 				defer runnerWait.Done()
 				runner.Run(ctx)
 			}(runner)
 		}
-		runners.Range(func(key, value any) bool {
-			channelID := key.(int64)
+		r.runnersMu.Lock()
+		for channelID, runner := range r.runners {
 			if _, ok := activeIDs[channelID]; !ok {
-				runner := value.(*channelRunner)
 				runner.Stop()
-				runners.Delete(channelID)
+				delete(r.runners, channelID)
 			}
-			return true
-		})
+		}
+		r.runnersMu.Unlock()
 	}
 
 	apply(initial)
@@ -694,10 +728,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 			r.mu.Lock()
 			r.started = false
 			r.mu.Unlock()
-			runners.Range(func(_, value any) bool {
-				value.(*channelRunner).Stop()
-				return true
-			})
+			r.runnersMu.Lock()
+			for channelID, runner := range r.runners {
+				runner.Stop()
+				delete(r.runners, channelID)
+			}
+			r.runnersMu.Unlock()
 			runnerWait.Wait()
 			return ctx.Err()
 		}
@@ -705,19 +741,66 @@ func (r *Runtime) Run(ctx context.Context) error {
 }
 
 type channelRunner struct {
-	runtime *Runtime
-	updates chan channelConfig
-	stop    chan struct{}
+	runtime      *Runtime
+	updates      chan channelConfig
+	stop         chan struct{}
+	commandQueue *commandQueue
+	commandWake  chan struct{}
 }
 
 func newChannelRunner(runtime *Runtime, initial channelConfig) *channelRunner {
 	runner := &channelRunner{
-		runtime: runtime,
-		updates: make(chan channelConfig, 1),
-		stop:    make(chan struct{}),
+		runtime:      runtime,
+		updates:      make(chan channelConfig, 1),
+		stop:         make(chan struct{}),
+		commandQueue: newCommandQueue(runtime.commandQueueCapacityValue()),
+		commandWake:  make(chan struct{}, 1),
 	}
 	runner.Update(initial)
 	return runner
+}
+
+func (r *channelRunner) SetCommandQueueCapacity(capacity int) {
+	r.commandQueue.SetCapacity(capacity)
+}
+
+func (r *channelRunner) EnqueueCommand(command queuedCommand) error {
+	select {
+	case <-r.stop:
+		return ErrCommandRuntimeStopped
+	default:
+	}
+	if err := r.commandQueue.Enqueue(command); err != nil {
+		return err
+	}
+	select {
+	case r.commandWake <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (r *channelRunner) executeCommand(ctx context.Context, config channelConfig, device Device, session *pacedSession, reads []RegisterBlockRead, command queuedCommand) {
+	cycle, err := r.runtime.captureScriptCycle(config.channel, device, config.scriptVersions)
+	if err == nil && (!cycle.enabled || cycle.executor == nil) {
+		err = ErrCommandUnavailable
+	}
+	executor, ok := cycle.executor.(ScriptCommandExecutor)
+	if err == nil && !ok {
+		err = ErrCommandUnavailable
+	}
+	var result script.Result
+	if err == nil {
+		host := newDeviceScriptHost(session, device.UnitID, reads)
+		result, err = executor.ExecuteCommand(ctx, cycle.version, cycle.invocation, host, command.request.Name, command.request.Args)
+	}
+	if err == nil {
+		runtimeConfig := r.runtime.scriptConfig()
+		if runtimeConfig.EventSink != nil && len(result.Events) > 0 {
+			runtimeConfig.EventSink(ctx, device, fromScriptVersion(cycle.version), result.Events)
+		}
+	}
+	resolveCommandResult(command.done, CommandExecutionResult{Version: cycle.version, Result: result, Err: err})
 }
 
 func (r *channelRunner) Update(config channelConfig) {
@@ -747,6 +830,7 @@ func (r *channelRunner) Stop() {
 func (r *channelRunner) Run(ctx context.Context) {
 	current := channelConfig{}
 	nextDue := make(map[int64]time.Time)
+	pollsSinceCommand := 0
 	var sharedSession *pacedSession
 	deviceSessions := make(map[int64]*pacedSession)
 	var channelPacer *requestPacer
@@ -798,6 +882,9 @@ func (r *channelRunner) Run(ctx context.Context) {
 		}
 	}
 	shutdown := func() {
+		for _, command := range r.commandQueue.Drain() {
+			resolveCommandResult(command.done, CommandExecutionResult{Err: ErrCommandRuntimeStopped})
+		}
 		removeCurrentStates()
 		resetAllScriptStates()
 		closeAllSessions()
@@ -827,6 +914,13 @@ func (r *channelRunner) Run(ctx context.Context) {
 		}
 		for deviceID := range oldDevices {
 			if _, exists := newDevices[deviceID]; !exists {
+				for {
+					command, queued := r.commandQueue.DequeueForDevice(deviceID)
+					if !queued {
+						break
+					}
+					resolveCommandResult(command.done, CommandExecutionResult{Err: ErrCommandTargetUnavailable})
+				}
 				resetScriptStateForDevice(deviceID)
 				delete(nextDue, deviceID)
 				closeDeviceSession(deviceID)
@@ -889,24 +983,34 @@ func (r *channelRunner) Run(ctx context.Context) {
 			apply(config)
 		}
 		if !current.active || len(current.devices) == 0 {
-			result := waitForRunnerEvent(ctx, r.stop, r.updates, 0)
-			if result.stopped {
-				shutdown()
-				return
-			}
-			apply(result.config)
-			continue
-		}
-
-		device, due, waitFor := nextDevice(current.devices, nextDue, time.Now())
-		if !due {
-			result := waitForRunnerEvent(ctx, r.stop, r.updates, waitFor)
+			result := waitForRunnerEvent(ctx, r.stop, r.updates, r.commandWake, 0)
 			if result.stopped {
 				shutdown()
 				return
 			}
 			if result.updated {
 				apply(result.config)
+			}
+			continue
+		}
+
+		device, due, waitFor := nextDevice(current.devices, nextDue, time.Now())
+		if !due {
+			result := waitForRunnerEvent(ctx, r.stop, r.updates, r.commandWake, waitFor)
+			if result.stopped {
+				shutdown()
+				return
+			}
+			if result.updated {
+				apply(result.config)
+			} else if result.woken {
+				// A command arriving while the runner is between cycles wakes
+				// the runner into one immediate complete poll. The command is
+				// still executed only after that poll reaches this boundary.
+				for _, candidate := range current.devices {
+					nextDue[candidate.ID] = time.Time{}
+					break
+				}
 			}
 			continue
 		}
@@ -972,6 +1076,12 @@ func (r *channelRunner) Run(ctx context.Context) {
 
 		cycleResult := r.runtime.executeDeviceCycle(ctx, current.channel, device, session, isNetworkChannel(current.channel), cycle)
 		r.runtime.recordScriptRuntimeState(device, cycle, cycleResult, time.Now().UTC())
+		if cycleResult.scriptErr == nil && cycleResult.scriptExecuted {
+			runtimeConfig := r.runtime.scriptConfig()
+			if runtimeConfig.EventSink != nil && len(cycleResult.scriptResult.Events) > 0 {
+				runtimeConfig.EventSink(ctx, device, fromScriptVersion(cycle.version), cycleResult.scriptResult.Events)
+			}
+		}
 		if cycleResult.scriptErr != nil {
 			r.runtime.logger.Printf("脚本 after_poll 执行失败 device_id=%d script_version_id=%d error=%v", device.ID, cycle.version.VersionID, cycleResult.scriptErr)
 		}
@@ -984,6 +1094,13 @@ func (r *channelRunner) Run(ctx context.Context) {
 		}
 		// The next period starts after the complete device read cycle.
 		nextDue[device.ID] = time.Now().Add(interval)
+		pollsSinceCommand++
+		if pollsSinceCommand >= r.runtime.commandPollFairnessValue() {
+			if command, queued := r.commandQueue.DequeueForDevice(device.ID); queued {
+				r.executeCommand(ctx, current, device, session, cycleResult.staticReads, command)
+				pollsSinceCommand = 0
+			}
+		}
 	}
 }
 
@@ -1013,9 +1130,10 @@ type runnerWaitResult struct {
 	config  channelConfig
 	updated bool
 	stopped bool
+	woken   bool
 }
 
-func waitForRunnerEvent(ctx context.Context, stop <-chan struct{}, updates <-chan channelConfig, duration time.Duration) runnerWaitResult {
+func waitForRunnerEvent(ctx context.Context, stop <-chan struct{}, updates <-chan channelConfig, wakes <-chan struct{}, duration time.Duration) runnerWaitResult {
 	if duration <= 0 {
 		select {
 		case <-ctx.Done():
@@ -1024,6 +1142,8 @@ func waitForRunnerEvent(ctx context.Context, stop <-chan struct{}, updates <-cha
 			return runnerWaitResult{stopped: true}
 		case config := <-updates:
 			return runnerWaitResult{config: config, updated: true}
+		case <-wakes:
+			return runnerWaitResult{woken: true}
 		}
 	}
 	timer := time.NewTimer(duration)
@@ -1035,6 +1155,8 @@ func waitForRunnerEvent(ctx context.Context, stop <-chan struct{}, updates <-cha
 		return runnerWaitResult{stopped: true}
 	case config := <-updates:
 		return runnerWaitResult{config: config, updated: true}
+	case <-wakes:
+		return runnerWaitResult{woken: true}
 	case <-timer.C:
 		return runnerWaitResult{}
 	}
