@@ -31,13 +31,14 @@ uv run modbus-simulator --check-config
 |---|---|---|---|
 | rtu0 | Modbus RTU | `/tmp/modbus-rtu0` | 1、2 |
 | rtu1 | Modbus RTU | `/tmp/modbus-rtu1` | 1 |
+| rtc0 | Modbus RTU | `/tmp/modbus-rtc0` | 3 |
 | tcp0 | Modbus TCP | `127.0.0.1:1502` | 1、2 |
 | udp0 | MBAP + PDU over UDP | `127.0.0.1:1600` | 1、2 |
 | rtu_udp0 | RTU over UDP | `127.0.0.1:1700` | 1、2 |
 
 网络默认仅监听本机。需要其他机器连接时，在 `config/simulator.yaml` 把对应 `host` 改为 `0.0.0.0`，客户端使用模拟器所在机器实际 IP。
 
-`rtu0` 的两台设备共用一条总线，通过 Slave ID 区分；`rtu1` 是另一条独立总线。不同通道的数据存储相互独立，复用同一设备 YAML 不会共享写入或动态状态。可复制通道配置扩展到 8 路；每路 alias 必须唯一，每个通道内 Slave / Unit 不得重复。
+`rtu0` 的两台设备共用一条总线，通过 Slave ID 区分；`rtu1` 是另一条独立总线。`rtc0` 是专门用于 Starlark 主机时间校时测试的运行时钟设备，Unit 3，holding `100/101/102` 分别表示时/分/秒；详细用法见 [examples/time-register-sync.md](examples/time-register-sync.md)。不同通道的数据存储相互独立，复用同一设备 YAML 不会共享写入或动态状态。可复制通道配置扩展到 8 路；每路 alias 必须唯一，每个通道内 Slave / Unit 不得重复。
 
 ADR-0015 的完整验收使用 `config/adr0015-e2e.yaml`，它为 TCP、MBAP UDP、RTU over UDP 各启动 A/B/C 三个独立端口。Go API 将 A/B 配置到同一个协议通道且都使用 Unit ID 1，C 用于验证 endpoint 热更新；RTU 通道保留 Unit 1、2。
 
@@ -50,6 +51,7 @@ ADR-0016 的 ZNCK-I 动态事务夹具位于 `config/znck-i-fixture.yaml`，设�
 - `config/simulator.yaml`：日志、通道、串口参数和设备文件列表。
 - `config/devices/feeder_protector_01.yaml`：Slave 1，holding 原始值从 3000 开始，input 原始样例值 42。
 - `config/devices/feeder_protector_02.yaml`：Slave 2，holding 原始值从 3100 开始，input 原始样例值 43。
+- `config/devices/time_registers_03.yaml`：Slave 3，`rtc_clock` fixture，holding 100/101/102 为时/分/秒；FC16 全量校时后继续走时。
 
 所有地址为线上 **零基地址**，不是 40001 风格的显示编号。以下是 raw 联调数据；holding 和 input 是两个独立寄存器空间。
 
@@ -97,7 +99,7 @@ simulation:
 
 `fixed` 保持初值；`increment` / `decrement` 每 interval 秒加减 step，并在边界停住；`random` 在 min/max 范围内取随机值，整数类型按 scale 量化。没有脚本或表达式引擎。更新在访问设备时按 monotonic 时间补算，无人读取时不启动后台寄存器任务。
 
-通用写功能码可直接修改已配置的 holding / coil 数据，fixed 不会每次读取覆盖写入；重启恢复 YAML 初值。动态字段到下一次模拟时间点会按模拟规则覆盖客户端写值。
+通用写功能码可直接修改已配置的 holding / coil 数据，fixed 不会每次读取覆盖写入；重启恢复 YAML 初值。动态字段到下一次模拟时间点会按模拟规则覆盖客户端写值。`rtc_clock` 是专用 fixture：只接受 FC16 从地址 100 一次写入合法 `[hour, minute, second]`，该写入重设 RTC 基准而不是把寄存器永久固定；之后读取继续按经过时间递增。
 
 设备级慢响应：
 
@@ -181,7 +183,7 @@ RTU/UDP TX: 01 03 0E 0B B8 00 7D 00 00 04 D2 13 88 03 D4 00 00 84 F4
 }
 ```
 
-再添加 Unit ID 2 即可在同一总线采集第二台。第二路用 `/tmp/modbus-rtu1`，Unit ID 1。REST API 沿用项目现有登录认证。
+再添加 Unit ID 2 即可在同一总线采集第二台。第二路用 `/tmp/modbus-rtu1`，Unit ID 1。RTC 校时测试则创建指向 `/tmp/modbus-rtc0` 的 RTU 通道，设备使用 Unit 3，并配置 FC03 `startAddress=100, quantity=3`；再绑定 `examples/time-register-sync.star` 对应的已发布脚本。REST API 沿用项目现有登录认证。
 
 配置保存后由运行中的 Go API 在当前采集周期结束后热刷新；按项目 Taskfile 启动：根目录 `task api`（SQLite profile 使用 `task api:sqlite`）；新库先运行对应 `task db:migrate` / `task db:migrate:sqlite`。API 存活用 `/health`、数据库就绪用 `/ready`；当前数据为 `/api/v1/acquisition/states`。
 
@@ -233,7 +235,7 @@ logging:
 uv run python -m unittest discover -s tests -v
 ```
 
-覆盖 01/02/03/04/05/06/15/16；四种模式真实 socket/PTY 收发；FC03/04、多个 ID；CRC、未知 ID、非法地址/数量/功能码/长度；异常后的恢复；PTY 分片；数据类型、字节/字序、倍率；动态值与慢响应；配置校验、PTY 别名锁和失败清理。FC04/coil 等使用明确的通用测试夹具，未把它们冒充馈电设备协议。
+覆盖 01/02/03/04/05/06/15/16；四种模式真实 socket/PTY 收发；FC03/04、多个 ID；CRC、未知 ID、非法地址/数量/功能码/长度；异常后的恢复；PTY 分片；数据类型、字节/字序、倍率；动态值与慢响应；配置校验、PTY 别名锁和失败清理；以及 `rtc_clock` 的 FC16 校时、持续走时、跨午夜和非法/部分写拒绝。FC04/coil 等使用明确的通用测试夹具，未把它们冒充馈电设备协议。
 
 真实 Go 联调：在一个终端用推荐命令启动默认模拟器，另一个终端在本目录执行：
 
