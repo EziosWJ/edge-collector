@@ -8,9 +8,16 @@
 
 ## 1. 目标
 
-在现有 raw acquisition、多 transport Modbus 和 Starlark dynamic transaction 基础上，引入单 Broker MQTT Client。第一版完成 raw/status/event 上行和 command/command-result 下行闭环，同时保证 Broker 断线不会阻塞采集，高频 raw 不逐条持久化，关键 event / command result 可通过 SQLite outbox 可靠补发，控制命令通过既有 channelRunner safe boundary 执行 Starlark `command(ctx, name, args)`。
+在现有 raw acquisition、多 transport Modbus 和 Starlark dynamic transaction 基础上，引入单 Broker MQTT Client。第一版完成 raw/status/event 上行和 command/command-result 下行闭环，同时保证：
 
-第一版是 MQTT 基础设施和 raw/control contract，不建立正式业务 telemetry / alarm domain。
+- Broker 断线不阻塞采集；
+- 高频 raw 不逐条持久化；
+- 关键 event / command result 可可靠补发；
+- QoS1 重投/进程重启不重复执行真实控制；
+- command 在既有 channelRunner safe boundary 执行；
+- 真实控制开始前已保证 FINAL result 具有可持久化路径。
+
+第一版不建立正式业务 telemetry / alarm domain。
 
 ## 2. 总体数据流
 
@@ -18,52 +25,49 @@
 
 ```text
 CurrentStateStore
-  ├─ device completed poll snapshot
+  ├─ completed device poll
   │    → RawProjector
   │    → per-device latest/coalesce
   │    → MQTT raw publisher
   │
-  ├─ device communication state
-  │    → latest device status
-  │    → retained MQTT status
+  ├─ device current communication state
+  │    → retained status publisher
   │
-Script runtime committed event
+committed ScriptEvent
   → reliable event projection
   → mqtt_outbox
   → QoS1 publish
   → PUBACK
-  → delete outbox row
+  → delete row
 ```
 
 ### 2.2 下行
 
 ```text
 MQTT command subscription
-  → parse + validate
+  → strict parse/validate
   → command journal dedupe
   → device/script/queue validation
-  → persist ACCEPTED / rejection
-  → reliable command-result outbox
-  → bounded device/channel command queue
-  → current device cycle ends
+  → reliable FINAL-capacity admission
+  → persist ACCEPTED/rejection
+  → enqueue bounded command
+  → current device cycle completes
   → channel safe boundary
   → capture current published ScriptVersion
-  → command(ctx, name, args)
-  → persist FINAL journal result
-  → reliable command-result outbox
+  → command(ctx,name,args)
+  → persist FINAL journal result + reliable outbox
 ```
 
-MQTT callback 不直接获得或调用 Modbus session。
+MQTT callback 不直接获得 Modbus session。
 
 ## 3. 持久化模型
 
-PostgreSQL 与 SQLite schema / repository contract 必须一致。
+PostgreSQL 与 SQLite contract 必须一致。
 
 ### 3.1 `mqtt_config`
 
-第一版只有一个逻辑配置实例。建议字段：
+第一版只有一个逻辑配置实例。字段至少包括：
 
-- `id`
 - `enabled`
 - `edge_id`
 - `broker_url`
@@ -86,46 +90,42 @@ PostgreSQL 与 SQLite schema / repository contract 必须一致。
 - `outbox_retention_days`
 - `command_journal_retention_days`
 - `command_journal_max_rows`
+- command queue capacity / fairness 参数（若实现为配置）
 - create/update audit fields
-
-约束：
-
-- 第一版只能有一个 active config；
-- `edge_id` / `client_id` 非空；
-- broker URL 必须是支持的 TCP/TLS MQTT scheme；
-- reconnect min <= max；
-- 所有容量/时间参数做明确范围校验；
-- API 回读不得返回 password/private-key 明文或可逆 ciphertext。
 
 默认值：
 
-- protocol: MQTT 5
-- keepAliveSeconds: 30
-- connectTimeoutMs: 10000
-- reconnectMinMs: 1000
-- reconnectMaxMs: 60000
-- topicPrefix: `edge`
-- rawPublishIntervalMs: 1000
-- outboxMaxRows: 10000
-- outboxMaxBytes: 67108864
-- outboxRetentionDays: 7
-- commandJournalRetentionDays: 7
+```text
+protocolVersion = MQTT_5
+keepAliveSeconds = 30
+connectTimeoutMs = 10000
+reconnectMinMs = 1000
+reconnectMaxMs = 60000
+topicPrefix = edge
+rawPublishIntervalMs = 1000
+outboxMaxRows = 10000
+outboxMaxBytes = 67108864
+outboxRetentionDays = 7
+commandJournalRetentionDays = 7
+```
+
+所有数值参数有服务端范围校验；`reconnectMinMs <= reconnectMaxMs`。
 
 ### 3.2 Secret encryption
 
-Broker password 和 TLS client private key 使用部署级 master secret 对称加密保存。
+Password 与 TLS client private key 使用部署级 master secret 对称加密保存。
 
 要求：
 
-- master secret 从环境变量或只读文件加载；
-- 数据库只保存 ciphertext / nonce / version 等必要材料；
-- master secret 不通过 API、日志或审计 detail 返回；
-- 未配置 master secret 时，如果配置包含需要加密的 secret，保存/启动必须明确失败；
-- 更新 API 中空 secret 表示“保持现有 secret”，显式 clear 使用独立布尔字段或明确契约，禁止通过回读 masked value 再写回。
+- master secret 来自环境变量或只读文件；
+- 数据库只存 ciphertext/nonce/version 等必要材料；
+- master secret/password/private key 不进入 API、日志、审计或 MQTT payload；
+- 未配置 master secret 时，保存需要加密 secret 的配置明确失败；
+- update API 明确支持 keep / set / clear，不把 masked value/ciphertext 回写为明文。
 
 ### 3.3 `mqtt_outbox`
 
-建议字段：
+字段至少包括：
 
 - `id`
 - `message_id` unique
@@ -133,7 +133,7 @@ Broker password 和 TLS client private key 使用部署级 master secret 对称�
 - `topic`
 - `qos`
 - `retain`
-- `payload` JSON/text/blob
+- `payload`
 - `priority`
 - `created_at`
 - `expires_at` nullable
@@ -141,20 +141,42 @@ Broker password 和 TLS client private key 使用部署级 master secret 对称�
 - `last_attempt_at` nullable
 - `last_error` nullable
 
-第一版可直接删除已 PUBACK row，不长期保存 sent history。
-
-容量计算同时受 row 和 payload byte 上限约束。达到硬上限时不得删除尚未确认的 command final result 为新低优先级消息腾空间。
-
 建议 priority：
 
 1. command FINAL
-2. reliable alarm/script event
-3. command ACCEPTED / rejection
+2. reliable event
+3. command ACCEPTED/rejection
 4. 其他 reliable event
 
-### 3.4 `mqtt_command_journal`
+PUBACK 后删除 row。第一版不保留 sent history。
 
-建议字段：
+容量同时受 rows 与 bytes 约束。达到硬上限时不得静默删除未确认 command FINAL。
+
+### 3.4 Reliable result capacity admission
+
+控制命令在 ACCEPTED/enqueue 之前必须保证后续 FINAL result 有可靠持久化空间。
+
+允许实现方式：
+
+- 对每个已 ACCEPTED command 预留一份 FINAL outbox 容量；或
+- 为 command FINAL 保留独立的 row/byte 配额；或
+- 其他能够证明“控制执行后 FINAL 必可持久化”的等价机制。
+
+不允许：执行真实 Modbus 后才尝试插入 final outbox，并在容量不足时失败。
+
+准入失败：
+
+```text
+RELIABLE_RESULT_CAPACITY_EXHAUSTED
+```
+
+且不得执行真实控制。
+
+Reservation 若存在，必须在 FINAL durable commit、命令终止或明确 rejection 时正确释放，不能泄漏容量。
+
+### 3.5 `mqtt_command_journal`
+
+字段至少包括：
 
 - `command_id` PK
 - `device_id`
@@ -170,105 +192,22 @@ Broker password 和 TLS client private key 使用部署级 master secret 对称�
 - `error_type` nullable
 - `error_message` nullable
 
-允许状态：
+状态至少：
 
 - `ACCEPTED`
 - `REJECTED`
 - `EXPIRED`
-- `DUPLICATE`
 - `RUNNING`
 - `SUCCEEDED`
 - `FAILED`
 
-journal 是控制幂等事实源，不是 publish queue。
+`DUPLICATE` 是 intake 判定，不要求覆盖原 journal 的事实状态；重复 command 应返回已有状态/结果。
 
-清理任务只删除超过 retention 且不处于 `ACCEPTED/RUNNING` 的记录；不得删除仍可能执行的命令。
+Retention 只删除已完成且超过窗口的记录；不得清理 ACCEPTED/RUNNING。
 
-## 4. 管理 API 与页面
+## 4. Topic contract
 
-建议 REST：
-
-- `GET /api/v1/mqtt/config`
-- `PUT /api/v1/mqtt/config`
-- `POST /api/v1/mqtt/test-connection`
-- `GET /api/v1/mqtt/state`
-- `GET /api/v1/mqtt/outbox/stats`
-- `GET /api/v1/mqtt/commands`
-- `GET /api/v1/mqtt/commands/{commandId}`
-
-运行状态至少返回：
-
-- MQTT state
-- connectedAt / disconnectedAt
-- lastError
-- reconnect attempt/backoff
-- broker endpoint（不含 secret）
-- subscribed command topic filter
-- outbox rows / bytes / oldest age
-- raw latest pending count
-
-React 新增 MQTT 管理页：
-
-- enable
-- edgeId / broker / protocol / clientId
-- credentials
-- TLS
-- reconnect / raw publish / outbox 参数
-- test connection
-- runtime state
-- outbox health
-- 最近 command journal
-
-页面不得显示已保存 password/private key。
-
-## 5. MQTT Client Runtime
-
-### 5.1 状态机
-
-```text
-DISABLED
-CONNECTING
-CONNECTED
-RECONNECTING
-ERROR
-```
-
-`enabled=false` 时不连接 broker，不启动 publisher/subscription worker。
-
-配置 commit 后通知 MQTT runtime refresh；若连接参数变化：
-
-1. 停止旧 subscription/publisher；
-2. 关闭旧 client；
-3. 使用最新 committed config 建新 client；
-4. 不影响 acquisition runtime。
-
-多次快速配置更新遵循 latest committed config wins。
-
-### 5.2 Connect / reconnect
-
-默认自动指数/有界 backoff，在 `reconnectMinMs..reconnectMaxMs` 范围内。
-
-Broker 连接失败不能 busy loop。
-
-连接恢复后：
-
-1. subscribe command filter；
-2. publish retained edge online；
-3. publish latest retained device status；
-4. 恢复 raw latest stream；
-5. drain reliable outbox。
-
-### 5.3 LWT
-
-Topic：`{prefix}/{edgeId}/status`
-
-QoS 1，retain=true。
-
-LWT payload 使用 `edge-status/v1`，`online=false`。正常连接后立即以相同 topic 发布 `online=true` retained message。
-
-## 6. Topic Contract
-
-通过统一 builder 生成，不允许业务模块自行字符串拼接。
+统一 builder 生成：
 
 ```text
 {prefix}/{edgeId}/status
@@ -279,42 +218,101 @@ LWT payload 使用 `edge-status/v1`，`online=false`。正常连接后立即以�
 {prefix}/{edgeId}/device/{deviceId}/command-result
 ```
 
-对 prefix、edgeId、deviceId 中 MQTT wildcard / separator 做明确校验或 escape 约束。第一版建议直接禁止 `+`, `#`, `/` 出现在 identity segment。
+第一版 identity segment 禁止 `/`、`+`、`#`。
 
-Command subscription 可以使用：
+Command subscription：
 
 ```text
 {prefix}/{edgeId}/device/+/command
 ```
 
-收到消息后从 topic 提取 deviceId，并与 body deviceId 严格比较。
+从 topic 提取 deviceId，并与 body deviceId 严格一致。
 
-## 7. Message ID 与时间
+## 5. MQTT runtime
 
-上行每条消息生成稳定唯一 `messageId`。实现可使用 UUID/ULID，contract 不依赖具体算法，但必须：
+状态：
 
-- 进程内不会碰撞；
-- reliable outbox restart 后不会与历史记录冲突。
+```text
+DISABLED
+CONNECTING
+CONNECTED
+RECONNECTING
+ERROR
+```
 
-所有 wire timestamp 使用 RFC3339/RFC3339Nano，明确包含 offset 或 `Z`。
+要求：
 
-## 8. Payload v1
+- `enabled=false` 不建立连接；
+- config commit 后使用最新 committed config refresh；
+- 连接参数变化时关闭旧 client，再建新 client；
+- 多次快速修改 latest committed config wins；
+- reconnect 有界 backoff，不 busy-loop；
+- MQTT worker 不占 acquisition channel。
 
-### 8.1 Edge status
+重连成功：
+
+1. 恢复 command subscription；
+2. 发布 retained edge online；
+3. 重新发布最新 device status；
+4. 恢复 raw latest；
+5. drain outbox。
+
+## 6. LWT 与 edge status
+
+Topic：`{prefix}/{edgeId}/status`，QoS1，retain=true。
+
+正常 online payload 示例：
 
 ```json
 {
   "schema": "edge-status/v1",
   "messageId": "...",
   "edgeId": "edge-01",
-  "timestamp": "2026-09-17T14:40:00+08:00",
+  "timestamp": "2026-09-17T15:00:00+08:00",
   "data": {
-    "online": true
+    "online": true,
+    "reason": "connected"
   }
 }
 ```
 
-### 8.2 Device status
+LWT 在 CONNECT 时注册，例如：
+
+```json
+{
+  "schema": "edge-status/v1",
+  "messageId": "...",
+  "edgeId": "edge-01",
+  "timestamp": "2026-09-17T15:00:00+08:00",
+  "data": {
+    "online": false,
+    "reason": "last_will"
+  }
+}
+```
+
+关键语义：LWT 中 `timestamp` 是 Will 生成/CONNECT 时刻，**不是实际断线时刻**。Broker 不能在异常断线发生时动态修改预注册 payload。上级平台如需 offline observed time，应使用 Broker 收到/处理 LWT 的时间。
+
+测试必须覆盖长连接一段时间后异常断开，证明 payload timestamp 不被误命名/解释为 `offlineAt`。
+
+## 7. Payload v1
+
+### 7.1 通用 envelope
+
+```json
+{
+  "schema": ".../v1",
+  "messageId": "...",
+  "edgeId": "edge-01",
+  "deviceId": "device-01",
+  "timestamp": "RFC3339/RFC3339Nano",
+  "data": {}
+}
+```
+
+Edge status 无 deviceId。所有上行 messageId 必须唯一；可靠消息 restart 后不得碰撞历史未确认 row。
+
+### 7.2 Device status
 
 ```json
 {
@@ -332,9 +330,9 @@ Command subscription 可以使用：
 }
 ```
 
-设备状态值沿用 acquisition 公开契约，不为 MQTT 发明第二套状态机。
+状态值沿用 acquisition 当前公开语义。
 
-### 8.3 Raw register snapshot
+### 7.3 Raw snapshot
 
 ```json
 {
@@ -364,13 +362,15 @@ Command subscription 可以使用：
 }
 ```
 
-- uint16 value 使用 JSON integer；
-- 首次成功前 value 可使用 `null`；
-- 块失败时保留最后成功值但 `valid=false`；
-- block 顺序与 register 地址顺序保持 deterministic；
-- raw projection 不进行 signed/float/倍率/单位/bit 解释。
+规则：
 
-### 8.4 Script event
+- raw uint16 → JSON integer；
+- 首次成功前 value 可 null；
+- 失败块保留 last-known values 但 `valid=false`；
+- blocks/registers 顺序 deterministic；
+- 不做 signed/float/word-order/倍率/单位/bit 解释。
+
+### 7.4 Dynamic event
 
 ```json
 {
@@ -389,9 +389,9 @@ Command subscription 可以使用：
 }
 ```
 
-这是通用 dynamic event，不称为 alarm。
+这是 generic event，不称为业务 Alarm。
 
-### 8.5 Command input
+### 7.5 Command input
 
 ```json
 {
@@ -405,16 +405,18 @@ Command subscription 可以使用：
 }
 ```
 
-约束：
+规则：
 
-- commandId / deviceId / name 非空；
-- args 必须为 JSON object；
-- expiresAt 必须晚于 issuedAt；
-- 当前 host time 已超过 expiresAt 时不入执行队列；
-- payload 有服务端大小上限；
-- 未知额外字段第一版明确选择拒绝或忽略之一，建议拒绝以暴露接口错误。
+- strict schema；第一版未知字段拒绝；
+- commandId/deviceId/name 非空；
+- args 必须 object；
+- expiresAt > issuedAt；
+- host time 已超过 expiresAt → EXPIRED；
+- payload 有服务端大小限制。
 
-### 8.6 Command result
+Canonical payload hash 必须确定性，不受 JSON object key 顺序影响。
+
+### 7.6 Command result
 
 ```json
 {
@@ -436,129 +438,59 @@ Command subscription 可以使用：
 }
 ```
 
-失败：
+Wire error 只暴露稳定 type/message，不含 Go stack、SQL detail、secret。
 
-```json
-{
-  "error": {
-    "type": "MODBUS_EXCEPTION",
-    "message": "..."
-  }
-}
-```
+## 8. Raw publisher
 
-Wire payload 不包含 Go stack trace、DB error detail、secret 或 raw credentials。
+触发点：设备完整 static + `after_poll` cycle 完成、CurrentState 已提交之后。
 
-## 9. Raw Publisher
+规则：
 
-### 9.1 触发点
+- per-device 最多一份 pending latest；
+- 新 snapshot 覆盖旧 pending；
+- `rawPublishIntervalMs` 限 MQTT，不改 `pollIntervalMs`；
+- offline/slow broker 不创建无界 queue/goroutine；
+- QoS0 retain=false；
+- publish failure 不改变 acquisition state。
 
-设备一个完整 static + `after_poll` cycle 完成、CurrentState 已更新后，通知 raw projector。
+## 9. Device status publisher
 
-Raw MQTT 失败不反馈成 acquisition failure。
+QoS1 retain=true。至少在以下时机发布当前状态：
 
-### 9.2 Coalesce
+- MQTT connect/reconnect；
+- device current communication status 改变；
+- device identity/config 发生需要重新声明的变化。
 
-内存按 deviceId 维护最多一份 pending latest snapshot。
+第一版 current status 不要求逐 transition 持久化历史。
 
-如果 publish 尚未完成又有新 snapshot，则覆盖旧 pending latest。
-
-不得创建与 poll 次数同比增长的无界 channel/queue。
-
-### 9.3 Publish interval
-
-每设备最多以 `rawPublishIntervalMs` 发送一次最新 snapshot。
-
-该 interval 是 MQTT projection 限速，不改变设备 `pollIntervalMs`。
-
-## 10. Device Status Publisher
-
-Device status 使用 retained current-state 语义。
-
-至少在：
-
-- MQTT 连接建立；
-- device status 改变；
-- device identity/config 出现需要重新声明的变化；
-
-发布当前状态。
-
-第一版不要求把每一次 ONLINE↔DEGRADED transition 全部持久化为可靠历史事件；未来如上级平台要求完整状态历史，再升级为 reliable transition event。
-
-## 11. Reliable Outbox Worker
+## 10. Reliable outbox worker
 
 要求：
 
-- 单独 goroutine/worker，不阻塞 acquisition；
-- 只在 MQTT CONNECTED 时 drain；
-- FIFO 结合 priority，保证高优先级不会长期排在大量低优先级之后；
-- 单条 publish 使用有限 timeout；
-- 失败更新 attempt/error 后按 reconnect/backoff 等待，不 busy loop；
+- 独立 worker；
+- MQTT CONNECTED 才 drain；
+- priority + createdAt 顺序；
+- 单条 publish 有 timeout；
+- 失败更新 attempts/lastError；
 - PUBACK 后删除；
-- process restart 后继续 drain；
-- 清理 expired rows 时不能误删 command final result 等未确认关键消息，除非显式 retention 策略已经定义且产生可观察告警。
+- restart 自动继续；
+- 不 busy-loop；
+- event 只在 Starlark execution 成功 commit 后入 outbox。
 
-## 12. Command Intake 与幂等
+Retention 与 capacity 不能破坏第 3.4 节 FINAL guarantee。
 
-处理顺序：
+## 11. Starlark command runtime
 
-1. topic parse；
-2. payload size limit；
-3. strict JSON decode / schema；
-4. topic deviceId == payload deviceId；
-5. expires check；
-6. payload canonical hash；
-7. journal lookup；
-8. device existence/enabled；
-9. script binding + published version availability；
-10. command handler availability；
-11. queue capacity；
-12. transactionally persist ACCEPTED journal + accepted result outbox；
-13. enqueue command execution token。
-
-如果 12 成功而进程在 13 前崩溃，重启恢复策略必须能识别 `ACCEPTED` 未完成命令并重新入队，或者将其明确转为 FAILED；不能永久卡在 ACCEPTED。第一版建议启动时重新 enqueue 尚未过期的 ACCEPTED command。
-
-重复 command：
-
-- hash 相同且已有 FINAL：不执行，重新把已有 final result 放入 outbox（若尚无 pending）；
-- hash 相同且 ACCEPTED/RUNNING：不创建第二次执行；可重新发布当前状态；
-- hash 不同：`COMMAND_ID_CONFLICT`。
-
-## 13. Command Queue 与公平性
-
-每个 channel 或 device 使用有界 pending command 结构；具体内部结构可实现选择，但必须满足：
-
-- MQTT callback 非阻塞或有短有限 enqueue 时间；
-- command 不打断 in-flight device cycle；
-- command 在完整 device cycle safe boundary 执行；
-- 同 channel command transaction 与 poll transaction 不并发；
-- 不同 channel 可并行；
-- 普通 poll 不能永久饥饿；
-- command queue 满时返回 `QUEUE_FULL`；
-- disabled/deleted/moved device 的 pending command 需要得到明确失败结果，不可静默消失。
-
-建议公平策略：一次 safe boundary 最多连续执行固定数量 command，然后让已到期 poll 有机会执行；参数可内部常量或服务配置，但必须有自动测试。
-
-## 14. Starlark `command(ctx, name, args)`
-
-### 14.1 Compile/Validate
-
-Published script 可以只定义 `after_poll(ctx)`，也可以额外定义：
+Compiler 支持可选：
 
 ```python
 def command(ctx, name, args):
-    pass
+    ...
 ```
 
-现有 Validate 继续要求 `after_poll(ctx)`；`command` 存在时必须 callable 且签名符合要求。
+存在时必须 callable 且签名合法；旧脚本只含 `after_poll(ctx)` 继续可用。
 
-### 14.2 Args
-
-MQTT JSON `args` 转为受控 JSON-compatible Starlark dict/list/scalar。不得注入 host object。
-
-### 14.3 Context
-
-复用现有 DeviceContext：
+Command 复用：
 
 - `raw_register`
 - `read_holding`
@@ -569,209 +501,203 @@ MQTT JSON `args` 转为受控 JSON-compatible Starlark dict/list/scalar。不得
 - `emit_event`
 - `host_time`
 
-同样受 execution step/wall/modbus op/delay/state/event/print limits。
+并复用 wall/step/modbus-op/delay/state/event/print 限制。
 
-### 14.4 State / event commit
+Command 与 after_poll 共用 `(deviceId, versionId)` state scope，不能并发。
 
-command 与 after_poll 共用 `(deviceId, versionId)` state scope。
+Execution overlay：成功提交 state/events，失败回滚；真实 Modbus write 不可回滚。
 
-每次 command invocation 创建 overlay；成功返回后提交 state + buffered events，失败全部丢弃。已经发出的真实 Modbus write 无法回滚。
+正常 return `None`/JSON-compatible value；不可序列化 return → `SCRIPT_OUTPUT`。
 
-command committed event 正常进入 reliable MQTT event pipeline。
+## 12. Command scheduling
 
-### 14.5 Return
+Command 不在 block/after_poll 中间抢占。
 
-允许：
+执行边界：
 
-- `None` → `result: null`
-- JSON-compatible Starlark value → result JSON
+```text
+complete current device cycle
+→ channel safe boundary
+→ optionally execute command
+→ continue normal scheduling
+```
 
-不可序列化返回值映射 `SCRIPT_OUTPUT` / `FAILED`。
+同 channel 严格串行，不同 channel 可并行。
 
-## 15. Script Version 与配置变化
+Queue bounded。必须有 poll fairness；自动测试证明 command burst 下到期 poll 不会永久饥饿。
 
-Command 收到时不固定 ScriptVersion。
+Command 真正开始时捕获当前 runtime 已生效 published ScriptVersion。排队期间 Publish/Rollback 后使用新版本。
 
-真正从 queue 开始执行时，在 channel safe boundary 捕获 runtime 当前已生效 published version。
+## 13. Command intake 与幂等
 
-若执行前：
+顺序建议：
 
-- script unbind；
-- device disabled/deleted；
-- published pointer 不可用；
+1. parse strict JSON；
+2. validate schema/topic/body；
+3. check expiry；
+4. canonical hash + journal lookup；
+5. validate device enabled/script/handler；
+6. validate queue capacity；
+7. reliable final-result capacity admission；
+8. durable persist ACCEPTED + accepted result outbox；
+9. enqueue；
+10. executor start → journal RUNNING；
+11. completion → atomic durable FINAL journal + final outbox；
+12. release any reservation。
 
-则 command 明确 FAILED/REJECTED，并 journal + result outbox，不静默 drop。
+重复：
 
-Version 变化继续沿用 ADR-0016 state reset 规则。
+- same ID + same hash + FINAL → 不执行，确保已有 final result 可重新补发；
+- same ID + same hash + ACCEPTED/RUNNING → 不创建第二执行 token；
+- same ID + different hash → `COMMAND_ID_CONFLICT`。
 
-## 16. Error Contract
+启动恢复：扫描未完成 ACCEPTED。未过期且仍可执行则重新 enqueue；无法执行/已过期则形成明确 FINAL。不得永久挂起。
 
-平台错误：
+## 14. Error types
 
-- `INVALID_MESSAGE`
-- `DEVICE_NOT_FOUND`
-- `DEVICE_DISABLED`
-- `NO_SCRIPT_BOUND`
-- `NO_COMMAND_HANDLER`
-- `EXPIRED`
-- `COMMAND_ID_CONFLICT`
-- `QUEUE_FULL`
-- `MQTT_UNAVAILABLE`（仅管理/test-connection 等需要时）
+平台错误至少：
 
-执行错误复用：
+```text
+INVALID_MESSAGE
+DEVICE_NOT_FOUND
+DEVICE_DISABLED
+NO_SCRIPT_BOUND
+NO_COMMAND_HANDLER
+EXPIRED
+COMMAND_ID_CONFLICT
+QUEUE_FULL
+RELIABLE_RESULT_CAPACITY_EXHAUSTED
+```
 
-- `SCRIPT_COMPILE`
-- `SCRIPT_RUNTIME`
-- `SCRIPT_LIMIT`
-- `SCRIPT_OUTPUT`
-- `MODBUS_TRANSPORT`
-- `MODBUS_EXCEPTION`
-- `CANCELED`
+脚本/设备错误复用 ADR-0016：
 
-错误字符串必须 bounded，不能将 secret、SQL、stack trace 暴露到 MQTT wire。
+```text
+SCRIPT_COMPILE
+SCRIPT_RUNTIME
+SCRIPT_LIMIT
+SCRIPT_OUTPUT
+MODBUS_TRANSPORT
+MODBUS_EXCEPTION
+CANCELED
+```
 
-## 17. Security
+## 15. 管理 API
 
-- command topic 只订阅当前 edgeId namespace；
-- TLS/credentials 支持配置；
-- 管理 API 继续使用现有权限/审计体系；
-- MQTT config 修改、enable/disable、credential change 写操作审计；
-- command 原始 payload 可按 bounded/sanitized 形式进入 journal，不把敏感配置拼入日志；
-- Published Starlark 仍不能访问任意网络/MQTT/DB/filesystem；
-- `command()` 能写真实设备，页面必须明确风险。
+至少：
 
-本阶段不新增地址级 Starlark write ACL；沿用 ADR-0016 信任边界。
+```text
+GET  /api/v1/mqtt/config
+PUT  /api/v1/mqtt/config
+POST /api/v1/mqtt/test-connection
+GET  /api/v1/mqtt/state
+GET  /api/v1/mqtt/outbox/stats
+GET  /api/v1/mqtt/commands
+GET  /api/v1/mqtt/commands/{commandId}
+```
 
-## 18. 测试
+Config 回读不返回 secret/ciphertext。Test connection 有有限 timeout，不改变正式 runtime state。
 
-### 18.1 Persistence
+State 至少返回 MQTT state、connected/disconnected、lastError、reconnect metadata、subscription filter、outbox rows/bytes/oldest age、pending raw count。
 
-PostgreSQL / SQLite：
+## 16. React 管理页
 
-- mqtt config create/update/read；
-- secret ciphertext round-trip，不回传 plaintext；
-- outbox insert/order/delete/size limit；
-- command journal unique/hash/status/retention；
-- migration 保持现有 acquisition/script 数据。
+页面包含：
 
-### 18.2 MQTT fake/integration broker
-
-至少覆盖：
-
-- connect / reconnect / backoff；
-- MQTT 5 默认；
-- 3.1.1 compatibility；
-- LWT / retained edge status；
-- retained device status；
-- raw QoS0；
-- event/result QoS1 PUBACK 后 outbox 删除；
-- broker offline 时 raw coalesce、outbox 保留；
-- restart 后 outbox drain。
-
-CI 可启动 Mosquitto/EMQX 等测试 broker，但产品实现不得依赖某个 broker 私有 extension。
-
-### 18.3 Raw tests
-
-- complete device cycle 后投影；
-- block valid=false 时仍保留 last value + invalid marker；
-- publish interval；
-- slow publisher 覆盖旧 pending snapshot；
-- 不产生无界 goroutine/channel。
-
-### 18.4 Command tests
-
-- valid ACCEPTED→SUCCEEDED；
-- invalid JSON/schema；
-- topic/body mismatch；
-- expired；
-- device missing/disabled；
-- no script/no handler；
-- duplicate same payload 不重执行；
-- same commandId different payload conflict；
-- process restart 后 ACCEPTED recovery；
-- queue full；
-- safe boundary，不打断 device cycle；
-- fairness，poll 不饥饿；
-- command 开始执行时捕获最新 published version；
-- state/event success commit / failure rollback；
-- Modbus write 已发生但后续 script failure 的不可回滚边界；
-- command return serialization；
-- final result outbox 可靠重发。
-
-### 18.5 UI/API
-
-- config secret masking；
+- enabled；
+- edgeId/broker/protocol/clientId；
+- username/password；
+- TLS CA/cert/private key；
+- keepalive/connect/reconnect；
+- raw interval；
+- outbox/journal limits；
 - test connection；
 - runtime state；
 - outbox health；
-- command journal；
-- frontend lint/build。
+- recent command journal。
 
-## 19. 验收场景
+已保存 secret 只显示“已配置”，不把 placeholder 提交为新 secret。
 
-至少建立一个基于已有 RTC/ZNCK 模拟设备的真实闭环：
+配置写入 operation audit，但 audit 不记录 secret/ciphertext。
 
-1. 启动测试 broker；
-2. Edge Collector 连接并发布 retained edge online；
-3. RTU RTC Unit 3 持续采集；
-4. raw topic 收到 `100..102` snapshot；
-5. Broker 断线数个 poll，raw 不逐条写 outbox；
-6. Broker 恢复后收到最新 raw；
-7. 给绑定脚本设备发布 MQTT command；
-8. command 在 safe boundary 调用 `command()`；
-9. simulator 观察到一次预期 FC05/FC16；
-10. command-result SUCCEEDED 经 QoS1 收到；
-11. 重发同 commandId 不再次产生 Modbus write；
-12. Broker 在 command final 后、PUBACK 前断开，outbox 在恢复后补发 final result。
+## 17. 测试要求
 
-## 20. 第一版验收口径
+### Persistence
 
-全部满足后才能关闭本阶段 Spec：
+PostgreSQL + SQLite：
 
-1. 单 Broker MQTT config 在 PostgreSQL/SQLite 一致；
-2. password/private key 不明文落库或通过 API 回传；
-3. MQTT runtime 自动连接、重连且不阻塞 acquisition；
-4. edge/device retained status 可观察；
-5. raw snapshot 按 poll cycle latest-state 发布，支持 interval/coalesce；
-6. raw 断线不逐帧持久化；
-7. event/result 进入 bounded SQLite outbox 并在 PUBACK 后删除；
-8. outbox 不会静默淘汰 command final result；
-9. command journal 防止 QoS1/restart 重复控制；
-10. MQTT callback 不直接操作 Modbus；
-11. command 在完整 device cycle safe boundary 执行，不破坏 channel 串行；
-12. command queue bounded 且 poll 无永久饥饿；
-13. Starlark `command(ctx,name,args)` 复用现有 DeviceContext/state/event/resource limits；
-14. queued command 在真正执行时捕获当前 published script version；
-15. command accepted/final result wire contract 完整；
-16. MQTT 5 默认且应用 contract 保留 3.1.1 兼容；
-17. 管理页面可以配置、测试和观察 MQTT runtime/outbox/commands；
-18. broker offline/restart/duplicate command 的自动测试通过；
-19. `task backend:check`、PostgreSQL/SQLite integration、MQTT integration、`task frontend:lint`、`task frontend:build` 和端到端验收通过；
-20. 文档明确本阶段只有 raw/event/status/control，没有正式 telemetry/alarm。
+- migration；
+- config validation；
+- secret encryption；
+- outbox unique/order/delete/limits；
+- journal dedupe/retention/restart；
+- final capacity reservation/admission；
+- 并发 command intake 下容量不超卖。
 
-## 21. 非目标
+### MQTT integration
 
-- 多 Broker；
-- QoS 2；
-- 逐帧 raw offline history；
+标准测试 Broker 覆盖：
+
+- MQTT5 默认；
+- MQTT3.1.1 compatibility；
+- connect/reconnect/backoff；
+- command subscription restore；
+- retained edge/device status；
+- LWT；
+- LWT timestamp 不是 offlineAt；
+- PUBACK 前断开与 outbox restart drain。
+
+### Raw/status
+
+- complete-cycle projection；
+- block validity/old values；
+- first-read null；
+- deterministic order；
+- interval；
+- coalesce；
+- slow/offline publisher bounded memory。
+
+### Command
+
+- strict schema；
+- expiry；
+- duplicate/conflict；
+- queue full；
+- reliable capacity exhausted before real write；
+- safe boundary；
+- fairness；
+- latest script version capture；
+- state/event commit/rollback；
+- Modbus side-effect nonrollback；
+- crash after ACCEPTED before enqueue；
+- final durable but PUBACK missing → resend only, no re-execution；
+- concurrent duplicate QoS1 → one real control only。
+
+### E2E
+
+真实测试 Broker + `modbus-simulator` 至少证明：
+
+1. raw/status 正常上报；
+2. Broker offline 时 acquisition 持续；
+3. raw 不逐帧写 outbox，恢复后只发 latest；
+4. committed event 可补发；
+5. MQTT command 经 safe boundary 产生确定 simulator write；
+6. duplicate commandId 不产生第二次真实写；
+7. final ACK 前断线/重启只补 result，不重执行；
+8. outbox 容量不足时 command 在 simulator write 之前被拒绝；
+9. LWT 时间语义正确；
+10. MQTT5/3.1.1 都通过应用 contract。
+
+最终继续执行 backend check、PostgreSQL/SQLite integration、MQTT integration、simulator tests、frontend lint/build 和 browser/API E2E。
+
+## 18. Out of Scope
+
+- multi-broker / broker route rules；
+- QoS2；
+- raw 逐帧离线历史；
 - 正式 telemetry/alarm domain；
-- 业务字段解析；
+- 业务寄存器解析；
+- MQTT callback 直接操作 Modbus；
 - transaction-level command preemption；
-- MQTT 直接 Modbus session；
-- Starlark MQTT/network access；
-- per-device broker / route rule；
-- command 优先级由上级任意指定；
-- MQTT 历史消息查询系统。
-
-## 22. 后续演进
-
-后续独立阶段再决定：
-
-- protocol/business field → telemetry；
-- Alarm lifecycle → alarm MQTT；
-- 正式状态 transition 历史可靠上报；
-- 多 Broker / 项目协议适配；
-- 更强 control authorization / approval；
-- command-specific priority；
-- persisted Starlark state；
-- Modbus Server 与 MQTT 共享统一业务模型。
+- Starlark 任意 MQTT/network access；
+- per-device broker；
+- 外部 command 自定义调度 priority。
