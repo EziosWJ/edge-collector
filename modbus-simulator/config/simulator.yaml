@@ -12,6 +12,7 @@ channels:
     devices:
       - devices/feeder_protector_01.yaml
       - devices/feeder_protector_02.yaml
+      - devices/time_registers_03.yaml
   - name: rtu1
     protocol: rtu
     alias: /tmp/modbus-rtu1
