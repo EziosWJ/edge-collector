@@ -161,6 +161,29 @@ func TestCurrentStateStoreRemovesDisabledDevice(t *testing.T) {
 	}
 }
 
+func TestCurrentStateStoreNotifiesAfterCommittedSnapshot(t *testing.T) {
+	store := NewCurrentStateStore()
+	device := Device{ID: 181, ExternalID: "device-181", Name: "观察设备", ChannelID: 18, UnitID: 1, Enabled: Enabled, FailureThreshold: 1, RegisterBlocks: []RegisterBlock{{ID: 1811, FunctionCode: FunctionCodeReadHoldingRegisters, StartAddress: 10, Quantity: 1}}}
+	notified := make(chan CurrentState, 2)
+	store.SetObserver(func(state CurrentState) { notified <- state })
+	store.Ensure(device)
+	initial := <-notified
+	if initial.ExternalID != device.ExternalID || initial.RegisterBlocks[0].Values[0] != nil {
+		t.Fatalf("initial observed state = %#v", initial)
+	}
+	value := uint16(42)
+	store.RecordCycle(device, []RegisterBlockRead{{Block: device.RegisterBlocks[0], Values: []uint16{value}}}, time.Now().UTC())
+	committed := <-notified
+	if committed.Status != StatusOnline || committed.RegisterBlocks[0].Values[0] == nil || *committed.RegisterBlocks[0].Values[0] != value {
+		t.Fatalf("committed observed state = %#v", committed)
+	}
+	committed.RegisterBlocks[0].Values[0] = nil
+	current, ok := store.Get(device.ID)
+	if !ok || current.RegisterBlocks[0].Values[0] == nil {
+		t.Fatal("observer received a non-defensive state copy")
+	}
+}
+
 func TestCurrentStateStoreAggregatesChannelRuntimeStatus(t *testing.T) {
 	store := NewCurrentStateStore()
 	channel := Channel{ID: 20, Name: "TCP 轮询组", Protocol: ProtocolModbusTCP}

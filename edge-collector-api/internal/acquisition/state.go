@@ -58,6 +58,7 @@ type RegisterBlockRead struct {
 
 type CurrentState struct {
 	DeviceID            int64                `json:"deviceId"`
+	ExternalID          string               `json:"externalId"`
 	DeviceName          string               `json:"deviceName"`
 	ChannelID           int64                `json:"channelId"`
 	UnitID              uint8                `json:"unitId"`
@@ -70,12 +71,38 @@ type CurrentState struct {
 	LastError           string               `json:"lastError,omitempty"`
 }
 
+// CurrentStateObserver is called after a device snapshot has been committed
+// to the in-memory store. Observers receive a defensive copy and must not
+// perform blocking transport work on the acquisition runner's goroutine.
+type CurrentStateObserver func(CurrentState)
+
 type CurrentStateStore struct {
 	mu                sync.RWMutex
 	states            map[int64]CurrentState
 	channelStates     map[int64]ChannelRuntimeState
 	channelDevices    map[int64]map[int64]struct{}
 	configuredDevices map[int64]configuredDevice
+	observerMu        sync.RWMutex
+	observers         []CurrentStateObserver
+}
+
+func (s *CurrentStateStore) SetObserver(observer CurrentStateObserver) {
+	s.observerMu.Lock()
+	if observer == nil {
+		s.observers = nil
+	} else {
+		s.observers = []CurrentStateObserver{observer}
+	}
+	s.observerMu.Unlock()
+}
+
+func (s *CurrentStateStore) notifyObservers(state CurrentState) {
+	s.observerMu.RLock()
+	observers := append([]CurrentStateObserver(nil), s.observers...)
+	s.observerMu.RUnlock()
+	for _, observer := range observers {
+		observer(cloneState(state))
+	}
 }
 
 type configuredDevice struct {
@@ -187,15 +214,18 @@ func (s *CurrentStateStore) ConfigureChannels(channels []Channel, devices []Devi
 
 func (s *CurrentStateStore) Ensure(device Device) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	state, ok := s.states[device.ID]
 	if !ok {
-		s.states[device.ID] = newCurrentState(device)
+		state = newCurrentState(device)
+		s.states[device.ID] = state
+		s.mu.Unlock()
+		s.notifyObservers(state)
 		return
 	}
+	identityChanged := state.ChannelID != device.ChannelID || state.UnitID != device.UnitID || state.ExternalID != device.ExternalID || !sameNetworkEndpoint(state.NetworkEndpoint, device.NetworkEndpoint)
+	state.ExternalID = device.ExternalID
 	state.DeviceName = device.Name
-	identityChanged := state.ChannelID != device.ChannelID || state.UnitID != device.UnitID || !sameNetworkEndpoint(state.NetworkEndpoint, device.NetworkEndpoint)
 	state.ChannelID = device.ChannelID
 	state.UnitID = device.UnitID
 	state.NetworkEndpoint = cloneNetworkEndpoint(device.NetworkEndpoint)
@@ -218,13 +248,15 @@ func (s *CurrentStateStore) Ensure(device Device) {
 	}
 	s.states[device.ID] = state
 	s.updateChannelStateLocked(device.ChannelID)
+	s.mu.Unlock()
+	s.notifyObservers(state)
 }
 
 func (s *CurrentStateStore) RecordCycle(device Device, reads []RegisterBlockRead, at time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if configured, ok := s.configuredDevices[device.ID]; ok &&
 		(!configured.active || !sameConfiguredDevice(configured, device)) {
+		s.mu.Unlock()
 		return
 	}
 
@@ -232,6 +264,7 @@ func (s *CurrentStateStore) RecordCycle(device Device, reads []RegisterBlockRead
 	if !ok {
 		state = newCurrentState(device)
 	}
+	state.ExternalID = device.ExternalID
 	state.DeviceName = device.Name
 	state.ChannelID = device.ChannelID
 	state.UnitID = device.UnitID
@@ -316,10 +349,12 @@ func (s *CurrentStateStore) RecordCycle(device Device, reads []RegisterBlockRead
 	}
 	s.states[device.ID] = state
 	s.updateChannelStateLocked(device.ChannelID)
+	s.mu.Unlock()
+	s.notifyObservers(state)
 }
 
 func sameConfiguredDevice(configured configuredDevice, device Device) bool {
-	if configured.device.ID != device.ID || configured.device.Name != device.Name ||
+	if configured.device.ID != device.ID || configured.device.ExternalID != device.ExternalID || configured.device.Name != device.Name ||
 		configured.device.DeviceType != device.DeviceType || configured.device.ChannelID != device.ChannelID ||
 		configured.device.UnitID != device.UnitID || configured.device.PollIntervalMS != device.PollIntervalMS ||
 		configured.device.FailureThreshold != device.FailureThreshold || configured.device.Enabled != device.Enabled {
@@ -345,12 +380,12 @@ func sameRegisterBlocks(left, right []RegisterBlock) bool {
 // making them ineligible for the current configuration identity.
 func (s *CurrentStateStore) Invalidate(device Device) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	state, ok := s.states[device.ID]
 	if !ok {
 		state = newCurrentState(device)
 	}
+	state.ExternalID = device.ExternalID
 	state.DeviceName = device.Name
 	state.ChannelID = device.ChannelID
 	state.UnitID = device.UnitID
@@ -364,6 +399,8 @@ func (s *CurrentStateStore) Invalidate(device Device) {
 	state.LastError = "等待新配置首次成功"
 	s.states[device.ID] = state
 	s.updateChannelStateLocked(device.ChannelID)
+	s.mu.Unlock()
+	s.notifyObservers(state)
 }
 
 func (s *CurrentStateStore) Get(deviceID int64) (CurrentState, bool) {
@@ -497,6 +534,7 @@ func newCurrentState(device Device) CurrentState {
 	blocks, _ := reconcileBlockStates(nil, device.RegisterBlocks)
 	return CurrentState{
 		DeviceID:        device.ID,
+		ExternalID:      device.ExternalID,
 		DeviceName:      device.Name,
 		ChannelID:       device.ChannelID,
 		UnitID:          device.UnitID,

@@ -45,6 +45,11 @@ type ScriptCommandCapability interface {
 
 type ScriptEventSink func(context.Context, Device, ScriptVersion, []script.Event)
 
+// StateCycleSink is called after static acquisition and after_poll have both
+// completed and the CurrentState snapshot is committed. Implementations must
+// keep this callback bounded and non-blocking for the acquisition runner.
+type StateCycleSink func(context.Context, CurrentState)
+
 // ScriptStateResetter is the state lifecycle part of script.Runtime. It is
 // optional for fakes that do not retain state.
 type ScriptStateResetter interface {
@@ -61,6 +66,7 @@ type RuntimeScriptConfig struct {
 	VersionProvider ScriptVersionProvider
 	Executor        ScriptExecutor
 	EventSink       ScriptEventSink
+	CycleSink       StateCycleSink
 }
 
 func newScriptHostError(operation string, err error) error {
@@ -1082,6 +1088,7 @@ func (r *channelRunner) Run(ctx context.Context) {
 				runtimeConfig.EventSink(ctx, device, fromScriptVersion(cycle.version), cycleResult.scriptResult.Events)
 			}
 		}
+		r.runtime.notifyStateCycle(ctx, device)
 		if cycleResult.scriptErr != nil {
 			r.runtime.logger.Printf("脚本 after_poll 执行失败 device_id=%d script_version_id=%d error=%v", device.ID, cycle.version.VersionID, cycleResult.scriptErr)
 		}
@@ -1169,6 +1176,7 @@ func (r *Runtime) recordChannelFailure(devices []Device, err error) {
 			reads[index] = RegisterBlockRead{Block: block, Err: err}
 		}
 		r.store.RecordCycle(device, reads, time.Now().UTC())
+		r.notifyStateCycle(context.Background(), device)
 	}
 	r.logger.Printf("采集通道不可用 error=%v", err)
 }
@@ -1179,7 +1187,20 @@ func (r *Runtime) recordDeviceFailure(device Device, err error) {
 		reads[index] = RegisterBlockRead{Block: block, Err: err}
 	}
 	r.store.RecordCycle(device, reads, time.Now().UTC())
+	r.notifyStateCycle(context.Background(), device)
 	r.logger.Printf("采集设备不可用 device_id=%d error=%v", device.ID, err)
+}
+
+func (r *Runtime) notifyStateCycle(ctx context.Context, device Device) {
+	config := r.scriptConfig()
+	if config.CycleSink == nil {
+		return
+	}
+	state, ok := r.store.Get(device.ID)
+	if !ok {
+		return
+	}
+	config.CycleSink(ctx, state)
 }
 
 func PollChannelOnce(ctx context.Context, channel Channel, devices []Device, session ModbusSession, store *CurrentStateStore) error {
