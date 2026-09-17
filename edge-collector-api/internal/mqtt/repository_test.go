@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,6 +157,74 @@ func TestRepositoryCleanupNeverDeletesIncompleteCommandResult(t *testing.T) {
 		// The accepted notice may expire; the incomplete journal is what must
 		// remain durable. A final row would be the protected case below.
 		t.Fatalf("expired accepted notice rows = %d, want 0", stats.Rows)
+	}
+}
+
+func TestRepositoryAdmissionDoesNotOversellFinalReservation(t *testing.T) {
+	repository, _, cleanup := newSQLiteRepository(t)
+	defer cleanup()
+	ctx := context.Background()
+	current, err := repository.GetConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := configInput(current)
+	input.OutboxMaxRows = 2
+	input.OutboxMaxBytes = 1024
+	if _, err := repository.SaveConfig(ctx, input, auditEventForTest()); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for index := 0; index < 2; index++ {
+		index := index
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			commandID := "command-reservation-" + string(rune('a'+index))
+			acceptedID := commandID
+			acceptedPayload := `{"accepted":true}`
+			_, admissionErr := repository.AdmitCommand(ctx,
+				CommandJournal{CommandID: commandID, DeviceID: "device-reservation", CommandName: "close", PayloadHash: commandID, IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour), Status: CommandStatusAccepted},
+				OutboxMessage{MessageID: "accepted-" + commandID, MessageType: OutboxMessageTypeCommandAccepted, CommandID: &acceptedID, Topic: "command-result", QoS: 1, Payload: acceptedPayload, PayloadBytes: int64(len(acceptedPayload)), Priority: OutboxPriorityCommandNotice},
+				FinalReservation{CommandID: commandID, ReservedRows: 1, ReservedBytes: 500, AcceptedBytes: int64(len(acceptedPayload)), FinalBytes: 500},
+			)
+			results <- admissionErr
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	admitted := 0
+	for admissionErr := range results {
+		if admissionErr == nil {
+			admitted++
+			continue
+		}
+		if !errors.Is(admissionErr, ErrReliableResultCapacityExhausted) {
+			t.Fatalf("concurrent admission error = %v, want capacity exhaustion for the loser", admissionErr)
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("concurrent admissions = %d, want exactly one", admitted)
+	}
+	var reservations int64
+	if err := repository.db.Model(&FinalReservation{}).Count(&reservations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reservations != 1 {
+		t.Fatalf("final reservations = %d, want one", reservations)
+	}
+	var rows int64
+	if err := repository.db.Model(&OutboxMessage{}).Count(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("accepted outbox rows = %d, want one", rows)
 	}
 }
 

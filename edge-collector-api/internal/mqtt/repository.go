@@ -52,7 +52,30 @@ func (r *Repository) RuntimeConfig(ctx context.Context) (RuntimeConfig, error) {
 	if err != nil {
 		return RuntimeConfig{}, err
 	}
+	return r.runtimeConfigFromConfig(value)
+}
+
+// PreviewRuntimeConfig applies a management update in memory and returns the
+// connector projection used by test-connection. It does not write the config,
+// audit log, or ciphertext to the database.
+func (r *Repository) PreviewRuntimeConfig(ctx context.Context, input ConfigInput) (RuntimeConfig, error) {
+	current, err := r.GetConfig(ctx)
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+	next, err := r.configFromInput(current, input)
+	if err != nil {
+		return RuntimeConfig{}, wrapConfigError(err)
+	}
+	if err := ValidateConfig(next); err != nil {
+		return RuntimeConfig{}, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+	}
+	return r.runtimeConfigFromConfig(next)
+}
+
+func (r *Repository) runtimeConfigFromConfig(value Config) (RuntimeConfig, error) {
 	result := RuntimeConfig{Config: value}
+	var err error
 	if value.PasswordCiphertext != nil && *value.PasswordCiphertext != "" {
 		if r.secrets == nil {
 			return RuntimeConfig{}, ErrMasterSecretRequired
@@ -81,10 +104,10 @@ func (r *Repository) SaveConfig(ctx context.Context, input ConfigInput, event au
 	}
 	next, err := r.configFromInput(current, input)
 	if err != nil {
-		return Config{}, err
+		return Config{}, wrapConfigError(err)
 	}
 	if err := ValidateConfig(next); err != nil {
-		return Config{}, err
+		return Config{}, wrapConfigError(err)
 	}
 
 	var result Config
@@ -97,10 +120,10 @@ func (r *Repository) SaveConfig(ctx context.Context, input ConfigInput, event au
 		// writes cannot overwrite each other's kept ciphertext accidentally.
 		next, err = r.configFromInput(*locked, input)
 		if err != nil {
-			return err
+			return wrapConfigError(err)
 		}
 		if err := ValidateConfig(next); err != nil {
-			return err
+			return wrapConfigError(err)
 		}
 		if err := r.ensureConfiguredCapacity(tx, next); err != nil {
 			return err
@@ -116,6 +139,13 @@ func (r *Repository) SaveConfig(ctx context.Context, input ConfigInput, event au
 		return audit.RecordOn(ctx, tx, event)
 	})
 	return result, err
+}
+
+func wrapConfigError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 }
 
 func (r *Repository) configFromInput(current Config, input ConfigInput) (Config, error) {
@@ -533,7 +563,7 @@ func (r *Repository) NextOutbox(ctx context.Context, now time.Time) (*OutboxMess
 		now = r.now().UTC()
 	}
 	var value OutboxMessage
-	err := r.db.WithContext(ctx).Where("expires_at IS NULL OR expires_at > ?", now.UTC()).Order("priority DESC, created_at, id").First(&value).Error
+	err := r.db.WithContext(ctx).Where("expires_at IS NULL OR expires_at > ? OR message_type = ?", now.UTC(), OutboxMessageTypeCommandResult).Order("priority DESC, created_at, id").First(&value).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -551,8 +581,7 @@ func (r *Repository) MarkOutboxAttempt(ctx context.Context, id int64, at time.Ti
 	if errValue == nil {
 		updates["last_error"] = nil
 	} else {
-		message := errValue.Error()
-		updates["last_error"] = message
+		updates["last_error"] = stableDeliveryErrorCode(errValue)
 	}
 	return r.db.WithContext(ctx).Model(&OutboxMessage{}).Where("id=?", id).Updates(updates).Error
 }
@@ -585,7 +614,11 @@ func (r *Repository) Cleanup(ctx context.Context, now time.Time) error {
 	if now.IsZero() {
 		now = r.now().UTC()
 	}
-	if err := r.db.WithContext(ctx).Where("expires_at IS NOT NULL AND expires_at <= ? AND (message_type <> ? OR EXISTS (SELECT 1 FROM mqtt_command_journal AS journal WHERE journal.command_id=mqtt_outbox.command_id AND journal.status IN (?, ?, ?, ?)))", now.UTC(), OutboxMessageTypeCommandResult, CommandStatusRejected, CommandStatusExpired, CommandStatusSucceeded, CommandStatusFailed).Delete(&OutboxMessage{}).Error; err != nil {
+	// A command FINAL is the durable recovery proof. Its expiry is an
+	// observability/retention hint only; without a delivery history table the
+	// row must stay available until PUBACK deletes it. Otherwise a long broker
+	// outage could make a restart permanently lose the final result.
+	if err := r.db.WithContext(ctx).Where("expires_at IS NOT NULL AND expires_at <= ? AND (message_type <> ? OR NOT EXISTS (SELECT 1 FROM mqtt_command_journal AS journal WHERE journal.command_id=mqtt_outbox.command_id))", now.UTC(), OutboxMessageTypeCommandResult).Delete(&OutboxMessage{}).Error; err != nil {
 		return err
 	}
 	config, err := r.GetConfig(ctx)
@@ -593,7 +626,7 @@ func (r *Repository) Cleanup(ctx context.Context, now time.Time) error {
 		return err
 	}
 	cutoff := now.UTC().Add(-time.Duration(config.CommandJournalRetentionDays) * 24 * time.Hour)
-	return r.db.WithContext(ctx).Where("received_at < ? AND status IN (?, ?, ?, ?)", cutoff, CommandStatusRejected, CommandStatusExpired, CommandStatusSucceeded, CommandStatusFailed).Delete(&CommandJournal{}).Error
+	return r.db.WithContext(ctx).Where("received_at < ? AND status IN (?, ?, ?, ?) AND NOT EXISTS (SELECT 1 FROM mqtt_outbox AS outbox WHERE outbox.command_id=mqtt_command_journal.command_id AND outbox.message_type = ?)", cutoff, CommandStatusRejected, CommandStatusExpired, CommandStatusSucceeded, CommandStatusFailed, OutboxMessageTypeCommandResult).Delete(&CommandJournal{}).Error
 }
 
 func (r *Repository) FindCommand(ctx context.Context, commandID string) (*CommandJournalView, error) {

@@ -38,6 +38,7 @@ type CommandIntake struct {
 	repository *Repository
 	devices    CommandDeviceResolver
 	runtime    CommandAcquisitionRuntime
+	mu         sync.RWMutex
 	builder    TopicBuilder
 	maxBytes   int
 	now        func() time.Time
@@ -51,14 +52,34 @@ func (i *CommandIntake) SetMaxPayloadBytes(maxBytes int) {
 	if maxBytes < 1 {
 		return
 	}
+	i.mu.Lock()
 	i.maxBytes = maxBytes
+	i.mu.Unlock()
+}
+
+// Configure applies the latest committed topic identity without replacing
+// the intake or touching the acquisition runtime. It is safe to call while a
+// broker callback is validating another message.
+func (i *CommandIntake) Configure(builder TopicBuilder) {
+	i.mu.Lock()
+	i.builder = builder
+	i.mu.Unlock()
 }
 
 func (i *CommandIntake) SetClock(now func() time.Time) {
 	if now == nil {
 		return
 	}
+	i.mu.Lock()
 	i.now = now
+	i.mu.Unlock()
+}
+
+func (i *CommandIntake) settings() (TopicBuilder, int) {
+	i.mu.RLock()
+	builder, maxBytes := i.builder, i.maxBytes
+	i.mu.RUnlock()
+	return builder, maxBytes
 }
 
 // Handle is the MQTT callback's application boundary. It parses, validates,
@@ -71,12 +92,13 @@ func (i *CommandIntake) Handle(ctx context.Context, topic string, payload []byte
 	if i.repository == nil || i.devices == nil || i.runtime == nil {
 		return errors.New(CommandErrorCommandRuntimeUnavailable)
 	}
-	topicDeviceID, err := i.builder.ParseCommandTopic(topic)
+	builder, maxBytes := i.settings()
+	topicDeviceID, err := builder.ParseCommandTopic(topic)
 	if err != nil {
 		return ErrInvalidMessage
 	}
 	now := i.clockNow()
-	command, decodeErr := DecodeCommand(payload, i.maxBytes, now)
+	command, decodeErr := DecodeCommand(payload, maxBytes, now)
 	if errors.Is(decodeErr, ErrInvalidMessage) {
 		return ErrInvalidMessage
 	}
@@ -102,7 +124,7 @@ func (i *CommandIntake) Handle(ctx context.Context, topic string, payload []byte
 	}
 
 	device, err := i.devices.FindDeviceByExternalID(ctx, command.DeviceID)
-	if errors.Is(err, acquisition.ErrNotFound) || device == nil {
+	if errors.Is(err, acquisition.ErrNotFound) || (err == nil && device == nil) {
 		return i.reject(ctx, command, hash, CommandStatusRejected, &WireError{Type: CommandErrorDeviceNotFound, Message: "device not found"})
 	}
 	if err != nil {
@@ -182,7 +204,7 @@ func (i *CommandIntake) admitAndEnqueue(ctx context.Context, command CommandInpu
 func (i *CommandIntake) reject(ctx context.Context, command CommandInput, hash, status string, wireError *WireError) error {
 	now := i.clockNow()
 	completed := now
-	payload, err := i.buildResult(command, status, now, nil, nil, wireError)
+	payload, err := i.buildResult(command, status, now, nil, &completed, nil, wireError)
 	if err != nil {
 		return err
 	}
@@ -252,6 +274,7 @@ func (i *CommandIntake) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	_, maxBytes := i.settings()
 	for _, journal := range commands {
 		if journal.CommandPayload == "" {
 			if err := i.finalizeRecovered(ctx, journal, CommandStatusFailed, &WireError{Type: CommandErrorCommandRecoveryUncertain, Message: "command payload unavailable after restart"}); err != nil {
@@ -259,7 +282,7 @@ func (i *CommandIntake) Recover(ctx context.Context) error {
 			}
 			continue
 		}
-		command, decodeErr := DecodeCommand([]byte(journal.CommandPayload), i.maxBytes, i.clockNow())
+		command, decodeErr := DecodeCommand([]byte(journal.CommandPayload), maxBytes, i.clockNow())
 		if decodeErr != nil && !errors.Is(decodeErr, ErrCommandExpired) {
 			if err := i.finalizeRecovered(ctx, journal, CommandStatusFailed, &WireError{Type: CommandErrorInvalidMessage, Message: "stored command is invalid"}); err != nil {
 				return err
@@ -281,8 +304,10 @@ func (i *CommandIntake) Recover(ctx context.Context) error {
 		device, findErr := i.devices.FindDeviceByExternalID(ctx, command.DeviceID)
 		if findErr != nil || device == nil || device.Enabled != acquisition.Enabled || device.ScriptID == nil {
 			wireError := i.platformWireError(findErr)
-			if device == nil || errors.Is(findErr, acquisition.ErrNotFound) {
+			if errors.Is(findErr, acquisition.ErrNotFound) || (findErr == nil && device == nil) {
 				wireError = &WireError{Type: CommandErrorDeviceNotFound, Message: "device not found"}
+			} else if findErr != nil {
+				wireError = i.platformWireError(findErr)
 			} else if device.Enabled != acquisition.Enabled {
 				wireError = &WireError{Type: CommandErrorDeviceDisabled, Message: "device is disabled"}
 			} else if device.ScriptID == nil {
@@ -367,11 +392,13 @@ func (i *CommandIntake) buildResult(command CommandInput, status string, at time
 	if len(values) > 1 {
 		wireError, _ = values[1].(*WireError)
 	}
-	return BuildCommandResult(i.builder.EdgeID(), command.DeviceID, NewMessageID(at), command, status, at, startedAt, completedAt, result, wireError, at)
+	builder, _ := i.settings()
+	return BuildCommandResult(builder.EdgeID(), command.DeviceID, NewMessageID(at), command, status, at, startedAt, completedAt, result, wireError, at)
 }
 
 func (i *CommandIntake) resultTopic(deviceID string) string {
-	topic, _ := i.builder.DeviceCommandResult(deviceID)
+	builder, _ := i.settings()
+	topic, _ := builder.DeviceCommandResult(deviceID)
 	return topic
 }
 
@@ -385,10 +412,13 @@ func (i *CommandIntake) outboxExpiry(ctx context.Context, at time.Time) *time.Ti
 }
 
 func (i *CommandIntake) clockNow() time.Time {
-	if i.now == nil {
+	i.mu.RLock()
+	now := i.now
+	i.mu.RUnlock()
+	if now == nil {
 		return time.Now().UTC()
 	}
-	return i.now().UTC()
+	return now().UTC()
 }
 
 func (i *CommandIntake) platformWireError(err error) *WireError {
@@ -414,6 +444,42 @@ func (i *CommandIntake) platformWireError(err error) *WireError {
 		return &WireError{Type: CommandErrorCommandRuntimeUnavailable, Message: "command execution is unavailable"}
 	}
 	return i.executionWireError(err)
+}
+
+// StableCommandErrorCode is the log-safe projection of an intake error. The
+// MQTT callback may receive infrastructure errors too, so callers must not
+// log err.Error() directly; this function exposes only the documented wire
+// error vocabulary and never includes SQL, broker, or credential details.
+func StableCommandErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, ErrInvalidMessage):
+		return CommandErrorInvalidMessage
+	case errors.Is(err, ErrCommandExpired):
+		return CommandErrorExpired
+	case errors.Is(err, ErrCommandConflict):
+		return CommandErrorCommandIDConflict
+	case errors.Is(err, ErrReliableResultCapacityExhausted), errors.Is(err, ErrCommandJournalCapacity):
+		return CommandErrorReliableResultCapacityExhausted
+	case errors.Is(err, acquisition.ErrCommandQueueFull):
+		return CommandErrorQueueFull
+	case errors.Is(err, acquisition.ErrCommandUnavailable):
+		return CommandErrorNoCommandHandler
+	case errors.Is(err, acquisition.ErrCommandRuntimeStopped), errors.Is(err, acquisition.ErrCommandNotRunnable):
+		return CommandErrorCommandRuntimeUnavailable
+	case errors.Is(err, acquisition.ErrCommandTargetUnavailable), errors.Is(err, acquisition.ErrNotFound):
+		return CommandErrorDeviceNotFound
+	}
+	// Some intake paths intentionally return a stable sentinel created at the
+	// boundary rather than a shared package variable.
+	switch err.Error() {
+	case CommandErrorDeviceNotFound, CommandErrorDeviceDisabled, CommandErrorNoScriptBound,
+		CommandErrorNoCommandHandler, CommandErrorCommandRuntimeUnavailable:
+		return err.Error()
+	}
+	return CommandErrorCommandRuntimeUnavailable
 }
 
 func (i *CommandIntake) executionWireError(err error) *WireError {

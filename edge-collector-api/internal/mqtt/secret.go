@@ -33,7 +33,7 @@ func NewSecretBox(masterSecret string) (*SecretBox, error) {
 }
 
 // NewEnvironmentSecretBox reads the deployment-level secret from an
-// environment variable or a file with no group/other permissions. The
+// environment variable or a read-only file with owner-only permissions. The
 // APP_ form is used by the application's standard configuration convention;
 // the short form is convenient for deployment managers.
 func NewEnvironmentSecretBox() (*SecretBox, error) {
@@ -51,8 +51,8 @@ func NewEnvironmentSecretBox() (*SecretBox, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read MQTT master secret file: %w", err)
 		}
-		if info.Mode().Perm()&0o077 != 0 {
-			return nil, errors.New("MQTT master secret file must not be readable by group or other users")
+		if info.Mode().Perm()&0o377 != 0 {
+			return nil, errors.New("MQTT master secret file must be read-only and owner-only")
 		}
 		value, err := os.ReadFile(path)
 		if err != nil {

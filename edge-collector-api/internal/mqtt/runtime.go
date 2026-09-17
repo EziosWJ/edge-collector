@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 )
@@ -165,6 +166,7 @@ func (r *Runtime) applyConfig(parent context.Context) {
 	oldConfig := r.config
 	oldTransport := r.transport
 	oldCancel := r.transportCancel
+	oldState := r.state.State
 	started := r.started
 	r.mu.RUnlock()
 	if !started {
@@ -185,7 +187,7 @@ func (r *Runtime) applyConfig(parent context.Context) {
 		r.mu.Unlock()
 		return
 	}
-	if oldTransport != nil && reflect.DeepEqual(oldConfig, config) {
+	if oldTransport != nil && reflect.DeepEqual(oldConfig, config) && oldState != RuntimeStateError {
 		return
 	}
 	if oldCancel != nil {
@@ -314,7 +316,7 @@ func (r *Runtime) transportDisconnected(generation uint64, err error) {
 	r.state.ReconnectAttempts++
 	r.state.LastDisconnectedAt = timePointer(now)
 	if err != nil {
-		r.state.LastError = err.Error()
+		r.state.LastError = redactMQTTError(err.Error(), r.config.Password, r.config.ClientPrivateKey)
 	}
 	r.state.NextRetryAt = timePointer(now.Add(defaultBackoff(r.state.ReconnectAttempts, time.Duration(r.config.ReconnectMinMS)*time.Millisecond, time.Duration(r.config.ReconnectMaxMS)*time.Millisecond)))
 	callbacks := r.callbacks
@@ -331,7 +333,7 @@ func (r *Runtime) setError(err error) {
 	r.state.State = RuntimeStateError
 	r.state.Connected = false
 	if err != nil {
-		r.state.LastError = err.Error()
+		r.state.LastError = redactMQTTError(err.Error(), r.config.Password, r.config.ClientPrivateKey)
 	}
 	r.state.ReconnectAttempts++
 	r.state.NextRetryAt = timePointer(now.Add(defaultBackoff(r.state.ReconnectAttempts, time.Duration(maxInt(r.config.ReconnectMinMS, 1000))*time.Millisecond, time.Duration(maxInt(r.config.ReconnectMaxMS, 60000))*time.Millisecond)))
@@ -368,14 +370,18 @@ func (r *Runtime) Publish(ctx context.Context, publication Publication) error {
 	r.mu.RLock()
 	transport := r.transport
 	connected := r.state.Connected
+	password, privateKey := r.config.Password, r.config.ClientPrivateKey
 	r.mu.RUnlock()
 	if transport == nil || !connected {
 		return ErrMQTTNotConnected
 	}
-	return transport.Publish(ctx, publication)
+	return redactMQTTErrorValue(transport.Publish(ctx, publication), password, privateKey)
 }
 
 func (r *Runtime) TestConnection(ctx context.Context, config RuntimeConfig) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ValidateConfig(config.Config); err != nil {
 		return err
 	}
@@ -391,6 +397,38 @@ func (r *Runtime) TestConnection(ctx context.Context, config RuntimeConfig) erro
 		return waiter.WaitConnected(ctx)
 	}
 	return nil
+}
+
+// redactMQTTErrorValue keeps errors.Is useful to callers while ensuring that
+// connector diagnostics cannot expose a configured password or private key
+// through runtime state, outbox health, or application logs.
+func redactMQTTErrorValue(err error, secrets ...string) error {
+	if err == nil {
+		return nil
+	}
+	message := redactMQTTError(err.Error(), secrets...)
+	if message == err.Error() {
+		return err
+	}
+	return redactedMQTTError{cause: err, message: message}
+}
+
+type redactedMQTTError struct {
+	cause   error
+	message string
+}
+
+func (e redactedMQTTError) Error() string { return e.message }
+
+func (e redactedMQTTError) Unwrap() error { return e.cause }
+
+func redactMQTTError(message string, secrets ...string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
+	}
+	return message
 }
 
 func timePointer(value time.Time) *time.Time { return &value }

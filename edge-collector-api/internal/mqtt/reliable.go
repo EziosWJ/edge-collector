@@ -31,6 +31,7 @@ type ReliableOutboxWorker struct {
 	mu             sync.RWMutex
 	connected      func() bool
 	publishTimeout time.Duration
+	cleanupEvery   time.Duration
 	lastError      error
 }
 
@@ -48,6 +49,7 @@ func NewReliableOutboxWorker(repository *Repository, publisher Publisher, ingres
 		ingress:        make(chan OutboxMessage, ingressCapacity),
 		wake:           make(chan struct{}, 1),
 		publishTimeout: 5 * time.Second,
+		cleanupEvery:   time.Minute,
 	}
 	worker.connected = func() bool {
 		if stateReader, ok := publisher.(OutboxConnectionState); ok {
@@ -73,6 +75,15 @@ func (w *ReliableOutboxWorker) SetPublishTimeout(timeout time.Duration) {
 	}
 	w.mu.Lock()
 	w.publishTimeout = timeout
+	w.mu.Unlock()
+}
+
+func (w *ReliableOutboxWorker) SetCleanupInterval(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	w.mu.Lock()
+	w.cleanupEvery = interval
 	w.mu.Unlock()
 }
 
@@ -108,9 +119,17 @@ func (w *ReliableOutboxWorker) Run(ctx context.Context) error {
 		return errors.New("reliable MQTT outbox dependencies are required")
 	}
 	nextRetry := time.Time{}
+	nextCleanup := time.Time{}
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		now := time.Now().UTC()
+		if nextCleanup.IsZero() || !now.Before(nextCleanup) {
+			if err := w.repository.Cleanup(ctx, now); err != nil {
+				w.reportError(err)
+			}
+			nextCleanup = now.Add(w.cleanupInterval())
 		}
 		persisted := w.persistOne(ctx)
 		if w.isConnected() && !time.Now().Before(nextRetry) {
@@ -158,6 +177,16 @@ func (w *ReliableOutboxWorker) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+func (w *ReliableOutboxWorker) cleanupInterval() time.Duration {
+	w.mu.RLock()
+	interval := w.cleanupEvery
+	w.mu.RUnlock()
+	if interval <= 0 {
+		return time.Minute
+	}
+	return interval
 }
 
 func (w *ReliableOutboxWorker) persistOne(ctx context.Context) bool {
@@ -214,11 +243,13 @@ func (w *ReliableOutboxWorker) reportError(err error) {
 	if err == nil {
 		return
 	}
+	code := stableDeliveryErrorCode(err)
 	w.mu.Lock()
-	w.lastError = err
+	w.lastError = errors.New(code)
 	w.mu.Unlock()
-	// Do not include payloads or credentials in this diagnostic.
-	w.logger.Printf("mqtt_outbox_worker error_type=%T error=%v", err, err)
+	// Do not include payloads, credentials, SQL detail, or connector stack
+	// text in this diagnostic.
+	w.logger.Printf("mqtt_outbox_worker error_code=%s", code)
 }
 
 // EventProjector converts committed generic Starlark events into reliable

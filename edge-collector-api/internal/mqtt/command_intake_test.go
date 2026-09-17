@@ -81,6 +81,45 @@ func TestCommandIntakeAdmitsOnceAndFinalizesWithoutDuplicateExecution(t *testing
 	}
 }
 
+func TestCommandIntakeConcurrentDuplicateDeliveryEnqueuesOnce(t *testing.T) {
+	repository, _, cleanup := newSQLiteRepository(t)
+	defer cleanup()
+	builder, err := NewTopicBuilder("edge", "edge-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := acquisition.Device{ID: 45, ExternalID: "device-45", Enabled: acquisition.Enabled, ScriptID: int64Pointer(7)}
+	runtime := &intakeRuntimeFake{version: acquisition.ScriptVersion{ID: 8, ScriptID: 7, VersionNo: 2}}
+	intake := NewCommandIntake(repository, &intakeResolverFake{device: device}, runtime, builder)
+	at := time.Date(2026, 9, 17, 1, 30, 0, 0, time.UTC)
+	intake.SetClock(func() time.Time { return at })
+	payload := commandPayloadForTest(t, "command-45", device.ExternalID, "set_value", map[string]any{"value": 7}, at.Add(-time.Minute), at.Add(time.Hour))
+	topic := "edge/edge-01/device/device-45/command"
+
+	start := make(chan struct{})
+	results := make(chan error, 8)
+	var wait sync.WaitGroup
+	for index := 0; index < 8; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			results <- intake.Handle(context.Background(), topic, payload)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	for handleErr := range results {
+		if handleErr != nil {
+			t.Fatalf("duplicate Handle() error = %v", handleErr)
+		}
+	}
+	if len(runtime.requests) != 1 {
+		t.Fatalf("concurrent duplicate enqueue requests = %d, want one", len(runtime.requests))
+	}
+}
+
 func TestCommandIntakeRejectsExpiredAndDoesNotEnqueue(t *testing.T) {
 	repository, _, cleanup := newSQLiteRepository(t)
 	defer cleanup()
@@ -110,6 +149,39 @@ func TestCommandIntakeRejectsExpiredAndDoesNotEnqueue(t *testing.T) {
 	}
 	if result.Priority != OutboxPriorityCommandFinal || result.QoS != 1 {
 		t.Fatalf("expired result row = %#v", result)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal([]byte(result.Payload), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	data, ok := envelope.Data.(map[string]any)
+	if !ok || data["result"] != nil {
+		t.Fatalf("expired result data = %#v, want null result", envelope.Data)
+	}
+	wireError, ok := data["error"].(map[string]any)
+	if !ok || wireError["type"] != CommandErrorExpired {
+		t.Fatalf("expired wire error = %#v", data["error"])
+	}
+}
+
+func TestCommandIntakePropagatesDeviceResolverFailure(t *testing.T) {
+	repository, _, cleanup := newSQLiteRepository(t)
+	defer cleanup()
+	builder, _ := NewTopicBuilder("edge", "edge-01")
+	resolverErr := errors.New("device repository unavailable")
+	resolver := &intakeResolverFake{err: resolverErr}
+	runtime := &intakeRuntimeFake{}
+	intake := NewCommandIntake(repository, resolver, runtime, builder)
+	at := time.Date(2026, 9, 17, 2, 30, 0, 0, time.UTC)
+	intake.SetClock(func() time.Time { return at })
+	payload := commandPayloadForTest(t, "command-resolver-error", "device-resolver-error", "close", map[string]any{}, at.Add(-time.Minute), at.Add(time.Hour))
+
+	err := intake.Handle(context.Background(), "edge/edge-01/device/device-resolver-error/command", payload)
+	if !errors.Is(err, resolverErr) {
+		t.Fatalf("resolver error = %v, want %v", err, resolverErr)
+	}
+	if len(runtime.requests) != 0 {
+		t.Fatalf("enqueue requests = %d, want zero", len(runtime.requests))
 	}
 }
 

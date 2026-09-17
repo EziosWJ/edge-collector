@@ -87,6 +87,31 @@ func TestCommandQueueIsBounded(t *testing.T) {
 	runner.Stop()
 }
 
+func TestCommandCapturesLatestPublishedVersionAtSafeBoundary(t *testing.T) {
+	store := NewCurrentStateStore()
+	channel := Channel{ID: 9011, Protocol: ProtocolModbusRTU, Enabled: Enabled}
+	scriptID := int64(9012)
+	device := Device{ID: 9013, ChannelID: channel.ID, UnitID: 1, ScriptID: &scriptID, Enabled: Enabled}
+	runtime, err := NewRuntimeWithScripts(nil, nil, store, func(Channel, Device) (ModbusSession, error) {
+		return nil, errors.New("unused")
+	}, nil, RuntimeScriptConfig{Executor: &commandExecutorFake{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.mu.Lock()
+	runtime.started = true
+	runtime.scriptVersions = map[int64]ScriptVersion{device.ID: {ID: 9015, ScriptID: scriptID, VersionNo: 2}}
+	runtime.mu.Unlock()
+
+	cycle, err := runtime.captureLatestCommandCycle(channel, device, map[int64]ScriptVersion{device.ID: {ID: 9014, ScriptID: scriptID, VersionNo: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cycle.version.VersionID != 9015 || cycle.version.VersionNo != 2 {
+		t.Fatalf("command captured version = %#v, want latest published version", cycle.version)
+	}
+}
+
 type commandExecutorFake struct {
 	afterPoll    chan struct{}
 	command      chan struct{}

@@ -37,6 +37,9 @@ type paho5Transport struct {
 }
 
 func newPaho5Transport(parent context.Context, config RuntimeConfig, callbacks TransportCallbacks) (Transport, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	brokerURL, err := normalizePaho5URL(config.BrokerURL)
 	if err != nil {
 		return nil, err
@@ -88,6 +91,10 @@ func newPaho5Transport(parent context.Context, config RuntimeConfig, callbacks T
 			return connect, nil
 		},
 		ClientConfig: paho5.ClientConfig{
+			// MQTT 5 keeps the client identifier in the base Paho client
+			// configuration. Without this field autopaho would send an empty
+			// ClientID even though the management configuration supplied one.
+			ClientID: config.ClientID,
 			OnPublishReceived: []func(paho5.PublishReceived) (bool, error){func(received paho5.PublishReceived) (bool, error) {
 				if callbacks.OnMessage != nil && received.Packet != nil {
 					callbacks.OnMessage(received.Packet.Topic, append([]byte(nil), received.Packet.Payload...))
@@ -126,6 +133,9 @@ func (t *paho5Transport) WaitConnected(ctx context.Context) error {
 }
 
 func (t *paho5Transport) Publish(ctx context.Context, publication Publication) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	manager := t.getManager()
 	if manager == nil {
 		return ErrMQTTNotConnected
@@ -135,6 +145,9 @@ func (t *paho5Transport) Publish(ctx context.Context, publication Publication) e
 }
 
 func (t *paho5Transport) Subscribe(ctx context.Context, topic string, qos byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	manager := t.getManager()
 	if manager == nil {
 		return ErrMQTTNotConnected
@@ -163,7 +176,14 @@ type paho311Transport struct {
 }
 
 func newPaho311Transport(parent context.Context, config RuntimeConfig, callbacks TransportCallbacks) (Transport, error) {
-	tlsConfig, err := buildTLSConfig(config, mustParseURL(config.BrokerURL))
+	if parent == nil {
+		parent = context.Background()
+	}
+	brokerURL, err := parseMQTTBrokerURL(config.BrokerURL)
+	if err != nil {
+		return nil, err
+	}
+	tlsConfig, err := buildTLSConfig(config, brokerURL)
 	if err != nil {
 		return nil, err
 	}
@@ -217,11 +237,7 @@ func newPaho311Transport(parent context.Context, config RuntimeConfig, callbacks
 	client := paho311.NewClient(options)
 	transport.setClient(client)
 	token := client.Connect()
-	if !waitToken(transportContext, token, time.Duration(config.ConnectTimeoutMS)*time.Millisecond) {
-		cancel()
-		return nil, context.DeadlineExceeded
-	}
-	if err := token.Error(); err != nil {
+	if err := waitToken(transportContext, token, time.Duration(config.ConnectTimeoutMS)*time.Millisecond); err != nil {
 		cancel()
 		return nil, err
 	}
@@ -262,27 +278,27 @@ func (t *paho311Transport) WaitConnected(ctx context.Context) error {
 }
 
 func (t *paho311Transport) Publish(ctx context.Context, publication Publication) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	client := t.getClient()
 	if client == nil || !client.IsConnectionOpen() {
 		return ErrMQTTNotConnected
 	}
 	token := client.Publish(publication.Topic, publication.QoS, publication.Retain, publication.Payload)
-	if !waitToken(ctx, token, time.Until(contextDeadline(ctx, 30*time.Second))) {
-		return ctx.Err()
-	}
-	return token.Error()
+	return waitToken(ctx, token, time.Until(contextDeadline(ctx, 30*time.Second)))
 }
 
 func (t *paho311Transport) Subscribe(ctx context.Context, topic string, qos byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	client := t.getClient()
 	if client == nil || !client.IsConnectionOpen() {
 		return ErrMQTTNotConnected
 	}
 	token := client.Subscribe(topic, qos, nil)
-	if !waitToken(ctx, token, time.Until(contextDeadline(ctx, 30*time.Second))) {
-		return ctx.Err()
-	}
-	return token.Error()
+	return waitToken(ctx, token, time.Until(contextDeadline(ctx, 30*time.Second)))
 }
 
 func (t *paho311Transport) Close() error {
@@ -295,24 +311,25 @@ func (t *paho311Transport) Close() error {
 	return nil
 }
 
-func waitToken(ctx context.Context, token paho311.Token, timeout time.Duration) bool {
+func waitToken(ctx context.Context, token paho311.Token, timeout time.Duration) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if token == nil {
+		return errors.New("MQTT token is nil")
+	}
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	done := make(chan struct{})
-	go func() {
-		token.Wait()
-		close(done)
-	}()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case <-done:
-		return true
+	case <-token.Done():
+		return token.Error()
 	case <-ctx.Done():
-		return false
+		return ctx.Err()
 	case <-timer.C:
-		return false
+		return context.DeadlineExceeded
 	}
 }
 
@@ -324,9 +341,9 @@ func contextDeadline(ctx context.Context, fallback time.Duration) time.Time {
 }
 
 func normalizePaho5URL(raw string) (*url.URL, error) {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
-		return nil, fmt.Errorf("invalid MQTT broker URL")
+	parsed, err := parseMQTTBrokerURL(raw)
+	if err != nil {
+		return nil, err
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "mqtt", "ws":
@@ -345,9 +362,12 @@ func normalizePaho5URL(raw string) (*url.URL, error) {
 	}
 }
 
-func mustParseURL(raw string) *url.URL {
-	parsed, _ := url.Parse(raw)
-	return parsed
+func parseMQTTBrokerURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return nil, fmt.Errorf("invalid MQTT broker URL")
+	}
+	return parsed, nil
 }
 
 func buildTLSConfig(config RuntimeConfig, brokerURL *url.URL) (*tls.Config, error) {

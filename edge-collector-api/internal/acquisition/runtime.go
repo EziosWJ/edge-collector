@@ -228,6 +228,24 @@ func (r *Runtime) captureScriptCycle(channel Channel, device Device, versions ma
 	}, nil
 }
 
+// captureLatestCommandCycle reads the runtime's latest committed published
+// version at the command safe boundary. A poll cycle may have started with an
+// older channel snapshot while a publish/rollback refresh completed in the
+// meantime; commands must use the version effective when they actually begin.
+func (r *Runtime) captureLatestCommandCycle(channel Channel, device Device, fallback map[int64]ScriptVersion) (capturedScriptCycle, error) {
+	r.mu.Lock()
+	versions := cloneScriptVersions(r.scriptVersions)
+	started := r.started
+	r.mu.Unlock()
+	if !started {
+		// Direct runner tests and embedders may construct a channel runner
+		// without starting the coordinator. In that mode the runner snapshot is
+		// the only available version source.
+		versions = fallback
+	}
+	return r.captureScriptCycle(channel, device, versions)
+}
+
 func (r *Runtime) loadScriptVersions(ctx context.Context, devices []Device) (map[int64]ScriptVersion, error) {
 	config := r.scriptConfig()
 	if config.VersionProvider == nil {
@@ -655,6 +673,31 @@ func (r *Runtime) Refresh(ctx context.Context) error {
 	}
 }
 
+// WaitStarted waits until the coordinator has installed its initial snapshot
+// and marked itself active. MQTT command recovery uses this boundary so a
+// recovered command is never classified as unavailable merely because the
+// process is still starting.
+func (r *Runtime) WaitStarted(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		r.mu.Lock()
+		started := r.started
+		r.mu.Unlock()
+		if started {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (r *Runtime) Run(ctx context.Context) error {
 	r.mu.Lock()
 	needsRefresh := r.loader != nil && !r.snapshotReady
@@ -666,7 +709,6 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 
 	r.mu.Lock()
-	r.started = true
 	initial := configurationSnapshot{
 		channels:       cloneChannels(r.channels),
 		devices:        cloneDevices(r.devices),
@@ -719,6 +761,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 
 	apply(initial)
+	// Mark the coordinator started only after the initial channel runners have
+	// been installed. Command recovery waits on this boundary so recovered
+	// commands enter an existing channel safe boundary rather than racing the
+	// initial apply.
+	r.mu.Lock()
+	r.started = true
+	r.mu.Unlock()
 	for {
 		select {
 		case snapshot := <-r.refreshCh:
@@ -787,7 +836,7 @@ func (r *channelRunner) EnqueueCommand(command queuedCommand) error {
 }
 
 func (r *channelRunner) executeCommand(ctx context.Context, config channelConfig, device Device, session *pacedSession, reads []RegisterBlockRead, command queuedCommand) {
-	cycle, err := r.runtime.captureScriptCycle(config.channel, device, config.scriptVersions)
+	cycle, err := r.runtime.captureLatestCommandCycle(config.channel, device, config.scriptVersions)
 	if err == nil && (!cycle.enabled || cycle.executor == nil) {
 		err = ErrCommandUnavailable
 	}

@@ -39,7 +39,7 @@ func ValidateConfig(c Config) error {
 	if c.ReconnectMaxMS < c.ReconnectMinMS || c.ReconnectMaxMS > 600000 {
 		errs = append(errs, errors.New("mqtt.reconnect_max_ms must be >= reconnect_min_ms and <= 600000"))
 	}
-	if c.TopicPrefix == "" || strings.ContainsAny(c.TopicPrefix, "+#") || strings.HasPrefix(c.TopicPrefix, "/") || strings.HasSuffix(c.TopicPrefix, "/") {
+	if c.TopicPrefix == "" || len([]byte(c.TopicPrefix)) > 512 || strings.ContainsAny(c.TopicPrefix, "+#\x00\r\n") || strings.Contains(c.TopicPrefix, "//") || strings.HasPrefix(c.TopicPrefix, "/") || strings.HasSuffix(c.TopicPrefix, "/") {
 		errs = append(errs, errors.New("mqtt.topic_prefix must be non-empty and contain no wildcard or empty topic segment"))
 	}
 	if c.RawPublishIntervalMS < 50 || c.RawPublishIntervalMS > 3600000 {
@@ -73,6 +73,9 @@ func validateBrokerURL(raw string) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Host == "" {
 		return errors.New("mqtt.broker_url must be a broker URL with host")
+	}
+	if parsed.User != nil {
+		return errors.New("mqtt.broker_url must not contain user information")
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "mqtt", "mqtts", "tcp", "tls", "ssl", "ws", "wss":

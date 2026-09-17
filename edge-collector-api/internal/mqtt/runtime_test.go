@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -66,10 +67,73 @@ func TestRuntimeRestoresSubscriptionAndHonorsDisabledConfig(t *testing.T) {
 	}
 }
 
+func TestRuntimeRebuildsTransportAfterSubscriptionError(t *testing.T) {
+	repository, _, cleanup := newSQLiteRepository(t)
+	defer cleanup()
+	current, err := repository.GetConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := configInput(current)
+	input.Enabled = true
+	input.ReconnectMinMS = 100
+	input.ReconnectMaxMS = 100
+	if _, err := repository.SaveConfig(context.Background(), input, auditEventForTest()); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	factoryCalls := 0
+	fake := &testTransport{subscribeErr: errors.New("subscription unavailable")}
+	factory := func(_ context.Context, _ RuntimeConfig, callbacks TransportCallbacks) (Transport, error) {
+		mu.Lock()
+		factoryCalls++
+		mu.Unlock()
+		fake.mu.Lock()
+		fake.callbacks = callbacks
+		fake.mu.Unlock()
+		return fake, nil
+	}
+	runtime := NewRuntime(repository, factory)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	waitFor(t, func() bool { return runtime.State().State == RuntimeStateConnecting })
+	fake.mu.Lock()
+	callbacks := fake.callbacks
+	fake.mu.Unlock()
+	callbacks.OnConnected()
+	waitFor(t, func() bool { return runtime.State().State == RuntimeStateError })
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		calls := factoryCalls
+		mu.Unlock()
+		if calls >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	calls := factoryCalls
+	mu.Unlock()
+	if calls < 2 {
+		t.Fatalf("factory calls = %d, want a retry", calls)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime did not stop")
+	}
+}
+
 type testTransport struct {
 	mu            sync.Mutex
 	callbacks     TransportCallbacks
 	subscriptions []string
+	subscribeErr  error
 	closed        bool
 }
 
@@ -78,8 +142,9 @@ func (t *testTransport) Publish(context.Context, Publication) error { return nil
 func (t *testTransport) Subscribe(_ context.Context, topic string, _ byte) error {
 	t.mu.Lock()
 	t.subscriptions = append(t.subscriptions, topic)
+	err := t.subscribeErr
 	t.mu.Unlock()
-	return nil
+	return err
 }
 
 func (t *testTransport) Close() error {
