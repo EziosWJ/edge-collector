@@ -15,7 +15,15 @@
 
 ## Edge Collector 配置
 
-在“通信通道”创建 RTU 通道：
+开发环境使用 SQLite profile 时，执行根目录 `task db:migrate:sqlite` 会自动创建并绑定以下配置，无需在管理页面重复录入：
+
+- RTU 通道：`模拟器 RTC 时间同步 RTU`，串口 `/tmp/modbus-rtc0`，9600/8N1；
+- 设备：`时间寄存器测试设备-03`，Unit 3，FC03 `100..102`；
+- 脚本：`RTC 时间寄存器条件校时`，已发布 v1 并绑定到该设备。
+
+该开发数据由 `edge-collector-api/migrations/sqlite/dev/00001_rtc_time_sync_fixture.sql` 提供，仅在 `APP_ENV=dev` 且使用 SQLite profile 时执行；测试和 PostgreSQL 不会写入模拟设备。
+
+其他环境或需要手工覆盖配置时，在“通信通道”创建 RTU 通道：
 
 ```text
 port = /tmp/modbus-rtc0

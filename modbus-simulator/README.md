@@ -183,7 +183,7 @@ RTU/UDP TX: 01 03 0E 0B B8 00 7D 00 00 04 D2 13 88 03 D4 00 00 84 F4
 }
 ```
 
-再添加 Unit ID 2 即可在同一总线采集第二台。第二路用 `/tmp/modbus-rtu1`，Unit ID 1。RTC 校时测试则创建指向 `/tmp/modbus-rtc0` 的 RTU 通道，设备使用 Unit 3，并配置 FC03 `startAddress=100, quantity=3`；再绑定 `examples/time-register-sync.star` 对应的已发布脚本。REST API 沿用项目现有登录认证。
+再添加 Unit ID 2 即可在同一总线采集第二台。第二路用 `/tmp/modbus-rtu1`，Unit ID 1。使用 SQLite profile 时，根目录 `task db:migrate:sqlite` 会自动创建指向 `/tmp/modbus-rtc0` 的 RTC RTU 通道、Unit 3 设备、FC03 `startAddress=100, quantity=3` 读取块，以及已发布并绑定的 `examples/time-register-sync.star` 校时脚本；其他环境可按上述配置手工创建。REST API 沿用项目现有登录认证。
 
 配置保存后由运行中的 Go API 在当前采集周期结束后热刷新；按项目 Taskfile 启动：根目录 `task api`（SQLite profile 使用 `task api:sqlite`）；新库先运行对应 `task db:migrate` / `task db:migrate:sqlite`。API 存活用 `/health`、数据库就绪用 `/ready`；当前数据为 `/api/v1/acquisition/states`。
 

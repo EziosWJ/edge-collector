@@ -22,6 +22,7 @@ import (
 const (
 	migrationKindSchema = "schema"
 	migrationKindSeed   = "seed"
+	migrationKindDev    = "dev"
 	migrationKindAll    = "all"
 
 	logClearDefaultMigrationVersion int64 = 3
@@ -70,9 +71,21 @@ func run(ctx context.Context, args []string) error {
 			}
 		}
 	}
+	if shouldApplyDevSQLiteFixture(cfg, kind) {
+		if _, _, err := applyMigrationsForDriver(ctx, db.SQL, cfg.Database.Driver, migrationKindDev); err != nil {
+			return err
+		}
+	}
 
 	slog.Info("migrations applied", "kind", kind)
 	return nil
+}
+
+func shouldApplyDevSQLiteFixture(cfg *config.Config, kind string) bool {
+	if cfg == nil || cfg.Environment != config.EnvironmentDev || cfg.Database.Driver != database.DriverSQLite {
+		return false
+	}
+	return kind == migrationKindSeed || kind == migrationKindAll
 }
 
 func applyMigrations(ctx context.Context, sqlDB *sql.DB, kind string) (int64, int64, error) {

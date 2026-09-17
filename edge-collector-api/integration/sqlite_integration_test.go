@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,6 +94,85 @@ func TestSQLiteMigrationLifecycleAndBackup(t *testing.T) {
 	}
 	if configs != 1 {
 		t.Fatalf("restored config count = %d, want 1", configs)
+	}
+}
+
+func TestSQLiteDevMigrationSeedsRTCTimeSyncFixture(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dev.db")
+	runSQLiteMigrationsWithEnvironment(t, path, config.EnvironmentDev)
+	database := openSQLiteDatabase(t, path)
+	defer func() { _ = database.Close() }()
+
+	var channelID, deviceID, unitID, scriptID, publishedVersionID int64
+	if err := database.SQL.QueryRow(`
+		SELECT channel.id, device.id, device.unit_id, device.script_id, script.published_version_id
+		FROM acquisition_channel AS channel
+		JOIN acquisition_device AS device ON device.channel_id = channel.id
+		JOIN acquisition_script AS script ON script.id = device.script_id
+		WHERE channel.name = ? AND device.name = ? AND device.deleted = 0 AND script.deleted = 0`,
+		"模拟器 RTC 时间同步 RTU", "时间寄存器测试设备-03").Scan(&channelID, &deviceID, &unitID, &scriptID, &publishedVersionID); err != nil {
+		t.Fatalf("read dev RTC fixture: %v", err)
+	}
+	if channelID < 1 || deviceID < 1 || unitID != 3 || scriptID < 1 || publishedVersionID < 1 {
+		t.Fatalf("dev RTC fixture identity = channel %d, device %d, unit %d, script %d, published version %d", channelID, deviceID, unitID, scriptID, publishedVersionID)
+	}
+
+	var port string
+	var baudRate, dataBits, stopBits int
+	var parity string
+	if err := database.SQL.QueryRow(`
+		SELECT port, baud_rate, data_bits, stop_bits, parity
+		FROM acquisition_serial_channel WHERE channel_id = ?`, channelID).
+		Scan(&port, &baudRate, &dataBits, &stopBits, &parity); err != nil {
+		t.Fatalf("read dev RTC serial configuration: %v", err)
+	}
+	if port != "/tmp/modbus-rtc0" || baudRate != 9600 || dataBits != 8 || stopBits != 1 || parity != "N" {
+		t.Fatalf("dev RTC serial configuration = %s/%d/%d/%d/%s", port, baudRate, dataBits, stopBits, parity)
+	}
+
+	var functionCode, startAddress, quantity int
+	if err := database.SQL.QueryRow(`
+		SELECT function_code, start_address, quantity
+		FROM acquisition_register_block WHERE device_id = ?`, deviceID).
+		Scan(&functionCode, &startAddress, &quantity); err != nil {
+		t.Fatalf("read dev RTC register block: %v", err)
+	}
+	if functionCode != 3 || startAddress != 100 || quantity != 3 {
+		t.Fatalf("dev RTC register block = FC%d address %d quantity %d", functionCode, startAddress, quantity)
+	}
+
+	var source, checksum string
+	if err := database.SQL.QueryRow(`
+		SELECT script.draft_source, version.checksum
+		FROM acquisition_script AS script
+		JOIN acquisition_script_version AS version ON version.id = script.published_version_id
+		WHERE script.id = ?`, scriptID).Scan(&source, &checksum); err != nil {
+		t.Fatalf("read dev RTC script: %v", err)
+	}
+	expectedChecksum := fmt.Sprintf("%x", sha256.Sum256([]byte(source)))
+	if checksum != expectedChecksum || !strings.Contains(source, "ctx.host_time()") || !strings.Contains(source, "ctx.write_registers") {
+		t.Fatalf("dev RTC script checksum/source mismatch: checksum=%s expected=%s", checksum, expectedChecksum)
+	}
+}
+
+func TestSQLiteTestMigrationDoesNotSeedRTCTimeSyncFixture(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	runSQLiteMigrations(t, path)
+	database := openSQLiteDatabase(t, path)
+	defer func() { _ = database.Close() }()
+
+	var channels, devices, scripts int64
+	if err := database.GORM.Table("acquisition_channel").Where("name = ?", "模拟器 RTC 时间同步 RTU").Count(&channels).Error; err != nil {
+		t.Fatalf("count test RTC channels: %v", err)
+	}
+	if err := database.GORM.Table("acquisition_device").Where("name = ?", "时间寄存器测试设备-03").Count(&devices).Error; err != nil {
+		t.Fatalf("count test RTC devices: %v", err)
+	}
+	if err := database.GORM.Table("acquisition_script").Where("name = ?", "RTC 时间寄存器条件校时").Count(&scripts).Error; err != nil {
+		t.Fatalf("count test RTC scripts: %v", err)
+	}
+	if channels != 0 || devices != 0 || scripts != 0 {
+		t.Fatalf("test SQLite unexpectedly contains RTC fixture: channels=%d devices=%d scripts=%d", channels, devices, scripts)
 	}
 }
 
