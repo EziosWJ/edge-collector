@@ -22,6 +22,7 @@ type invocationState struct {
 	events     []Event
 	counter    ModbusOperationCounter
 	now        func() time.Time
+	hostTime   time.Time
 	printSink  PrintSink
 
 	totalDelayMs int
@@ -59,6 +60,8 @@ func (c *contextValue) Attr(name string) (starlark.Value, error) {
 		return starlark.MakeInt64(s.version.VersionID), nil
 	case "script_version":
 		return starlark.MakeInt(s.version.VersionNo), nil
+	case "host_time":
+		return s.builtin("host_time", s.hostTimeValue), nil
 	case "raw_register":
 		return s.builtin("raw_register", s.rawRegister), nil
 	case "read_holding":
@@ -86,6 +89,7 @@ func (c *contextValue) AttrNames() []string {
 		"device_id",
 		"delay",
 		"emit_event",
+		"host_time",
 		"protocol",
 		"raw_register",
 		"read_holding",
@@ -127,6 +131,35 @@ func (s *invocationState) consumeModbus(operation string) error {
 		)
 	}
 	return nil
+}
+
+func (s *invocationState) hostTimeValue(args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("ctx.host_time", args, kwargs); err != nil {
+		return nil, err
+	}
+	t := s.hostTime
+	zone, offset := t.Zone()
+	result := starlark.NewDict(9)
+	fields := []struct {
+		key   string
+		value starlark.Value
+	}{
+		{"year", starlark.MakeInt(t.Year())},
+		{"month", starlark.MakeInt(int(t.Month()))},
+		{"day", starlark.MakeInt(t.Day())},
+		{"hour", starlark.MakeInt(t.Hour())},
+		{"minute", starlark.MakeInt(t.Minute())},
+		{"second", starlark.MakeInt(t.Second())},
+		{"unix", starlark.MakeInt64(t.Unix())},
+		{"timezone", starlark.String(zone)},
+		{"utc_offset_seconds", starlark.MakeInt(offset)},
+	}
+	for _, field := range fields {
+		if err := result.SetKey(starlark.String(field.key), field.value); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func (s *invocationState) rawRegister(args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
