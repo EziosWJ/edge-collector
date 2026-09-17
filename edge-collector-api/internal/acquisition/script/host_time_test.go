@@ -29,6 +29,9 @@ func TestHostTimeIsStablePerInvocationAndUsesConfiguredZone(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("HostTime calls = %d, want 1 per invocation", calls)
 	}
+	if result.ModbusOperations != 0 {
+		t.Fatalf("ctx.host_time Modbus operations = %d, want 0", result.ModbusOperations)
+	}
 	want := map[string]any{
 		"year":               int64(2026),
 		"month":              int64(9),
@@ -45,11 +48,7 @@ func TestHostTimeIsStablePerInvocationAndUsesConfiguredZone(t *testing.T) {
 	}
 }
 
-func TestHostTimeDriftScriptWritesOnlyWhenNeeded(t *testing.T) {
-	zone := time.FixedZone("SITE", 8*60*60)
-	hostAt := time.Date(2026, 9, 17, 12, 34, 56, 0, zone)
-	runtime := NewRuntime(Options{HostTime: func() time.Time { return hostAt }})
-	compiled, err := runtime.Compile(testVersion(`MAX_DRIFT_SECONDS = 2
+const hostTimeDriftScript = `MAX_DRIFT_SECONDS = 2
 
 def seconds_of_day(hour, minute, second):
     return hour * 3600 + minute * 60 + second
@@ -75,24 +74,51 @@ def after_poll(ctx):
         return
 
     ctx.write_registers(100, [now["hour"], now["minute"], now["second"]])
-`))
+`
+
+func TestHostTimeDriftScriptWritesOnlyWhenNeeded(t *testing.T) {
+	zone := time.FixedZone("SITE", 8*60*60)
+	hostAt := time.Date(2026, 9, 17, 12, 34, 56, 0, zone)
+	runtime := NewRuntime(Options{HostTime: func() time.Time { return hostAt }})
+	compiled, err := runtime.Compile(testVersion(hostTimeDriftScript))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	near := &testHost{raw: map[[2]int]uint16{{3, 100}: 12, {3, 101}: 34, {3, 102}: 55}}
-	if _, err := runtime.Invoke(context.Background(), compiled, Invocation{DeviceID: 10}, near); err != nil {
+	nearResult, err := runtime.Invoke(context.Background(), compiled, Invocation{DeviceID: 10}, near)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(near.writes) != 0 {
-		t.Fatalf("near clock writes = %#v, want none", near.writes)
+	if len(near.writes) != 0 || nearResult.ModbusOperations != 0 {
+		t.Fatalf("near clock writes/operations = %#v/%d, want none/0", near.writes, nearResult.ModbusOperations)
 	}
 
 	far := &testHost{raw: map[[2]int]uint16{{3, 100}: 12, {3, 101}: 34, {3, 102}: 40}}
-	if _, err := runtime.Invoke(context.Background(), compiled, Invocation{DeviceID: 11}, far); err != nil {
+	farResult, err := runtime.Invoke(context.Background(), compiled, Invocation{DeviceID: 11}, far)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(far.writes) != 1 || far.writes[0].address != 100 || !reflect.DeepEqual(far.writes[0].values, []uint16{12, 34, 56}) {
-		t.Fatalf("far clock writes = %#v, want one 12:34:56 write", far.writes)
+	if len(far.writes) != 1 || farResult.ModbusOperations != 1 || far.writes[0].address != 100 || !reflect.DeepEqual(far.writes[0].values, []uint16{12, 34, 56}) {
+		t.Fatalf("far clock writes/operations = %#v/%d, want one 12:34:56 write/1", far.writes, farResult.ModbusOperations)
+	}
+}
+
+func TestHostTimeDriftScriptHandlesMidnightTolerance(t *testing.T) {
+	zone := time.FixedZone("SITE", 8*60*60)
+	hostAt := time.Date(2026, 9, 18, 0, 0, 1, 0, zone)
+	runtime := NewRuntime(Options{HostTime: func() time.Time { return hostAt }})
+	compiled, err := runtime.Compile(testVersion(hostTimeDriftScript))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	host := &testHost{raw: map[[2]int]uint16{{3, 100}: 23, {3, 101}: 59, {3, 102}: 59}}
+	result, err := runtime.Invoke(context.Background(), compiled, Invocation{DeviceID: 12}, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(host.writes) != 0 || result.ModbusOperations != 0 {
+		t.Fatalf("midnight tolerance writes/operations = %#v/%d, want none/0", host.writes, result.ModbusOperations)
 	}
 }
