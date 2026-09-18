@@ -137,6 +137,8 @@ export type MqttCommandJournal = {
 export type MqttCommandListQuery = Partial<ApiPageRequest> & {
   status?: MqttCommandStatus;
   deviceId?: string;
+  commandId?: string;
+  name?: string;
 };
 
 export type MqttCommandPage = ApiPageResult<MqttCommandJournal>;

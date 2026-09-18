@@ -7,6 +7,9 @@ import { AcquisitionDevicesPage } from "@/pages/acquisition/devices";
 import { AcquisitionRealtimePage } from "@/pages/acquisition/realtime";
 import { AcquisitionScriptsPage } from "@/pages/acquisition/scripts";
 import { MqttManagementPage } from "@/pages/mqtt";
+import { MqttOverviewPage } from "@/pages/mqtt/overview";
+import { MqttConfigPage } from "@/pages/mqtt/config";
+import { MqttCommandsPage } from "@/pages/mqtt/commands";
 import { ChangePasswordPage } from "@/pages/change-password";
 import { DashboardPage } from "@/pages/dashboard";
 import { DetailDemoPage } from "@/pages/examples/detail-demo";
@@ -106,6 +109,18 @@ export const router = createBrowserRouter([
       {
         path: "mqtt",
         element: <MqttManagementPage />,
+      },
+      {
+        path: "mqtt/overview",
+        element: <MqttOverviewPage />,
+      },
+      {
+        path: "mqtt/config",
+        element: <MqttConfigPage />,
+      },
+      {
+        path: "mqtt/commands",
+        element: <MqttCommandsPage />,
       },
       {
         path: "system/dept",

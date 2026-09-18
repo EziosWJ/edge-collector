@@ -14,12 +14,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { getMenuIcon } from "@/lib/menu-icons";
+import { hasPermission } from "@/lib/permission";
 import type { CurrentUserMenu } from "@/types";
 
 export type NavItem = {
   label: string;
   path: string;
   icon: LucideIcon;
+  permission?: string;
   externalUrl?: string;
   activePaths?: string[];
   children?: NavItem[];
@@ -67,6 +69,26 @@ export const defaultNavItems: NavItem[] = [
     label: "MQTT 管理",
     path: "/mqtt",
     icon: RadioTower,
+    children: [
+      {
+        label: "运行总览",
+        path: "/mqtt/overview",
+        icon: Activity,
+        permission: "mqtt:overview:list",
+      },
+      {
+        label: "连接配置",
+        path: "/mqtt/config",
+        icon: Cable,
+        permission: "mqtt:config:list",
+      },
+      {
+        label: "Command Journal",
+        path: "/mqtt/commands",
+        icon: FileSearch,
+        permission: "mqtt:command:list",
+      },
+    ],
   },
 
   {
@@ -179,9 +201,21 @@ function toNavItem(menu: CurrentUserMenu): NavItem | null {
     label: menu.menuName,
     path,
     icon: getMenuIcon(menu.icon),
+    permission: menu.permissionCode ?? undefined,
     externalUrl: externalUrl || undefined,
     children: children.length > 0 ? children : undefined,
   };
+}
+
+function filterNavItemsByPermission(items: NavItem[]): NavItem[] {
+  return items.flatMap((item) => {
+    const children = item.children?.length
+      ? filterNavItemsByPermission(item.children)
+      : undefined;
+    if (item.permission && !hasPermission(item.permission)) return [];
+    if (item.children?.length && !children?.length) return [];
+    return [{ ...item, children }];
+  });
 }
 
 export function convertUserMenusToNavItems(menus: CurrentUserMenu[]): NavItem[] {
@@ -198,7 +232,7 @@ export function mergeNavItems(
   const existingPaths = collectNavPaths(baseItems);
   const dedupedUserItems = filterDuplicateNavItems(userItems, existingPaths);
 
-  return [...baseItems, ...dedupedUserItems];
+  return filterNavItemsByPermission([...baseItems, ...dedupedUserItems]);
 }
 
 export function createUserMenuTitleMap(
@@ -238,6 +272,9 @@ export const staticRouteTitleMap: Record<string, string> = {
   "/acquisition/script": "协议脚本",
   "/acquisition/realtime": "实时寄存器",
   "/mqtt": "MQTT 管理",
+  "/mqtt/overview": "运行总览",
+  "/mqtt/config": "连接配置",
+  "/mqtt/commands": "Command Journal",
   "/system/user": "用户管理",
   "/system/dept": "部门管理",
   "/system/dict": "字典管理",
