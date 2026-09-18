@@ -779,6 +779,55 @@ func startPostgres(t *testing.T) temporaryPostgres {
 	return database
 }
 
+func startConfiguredPostgresSchema(t *testing.T, databaseConfig config.DatabaseConfig) string {
+	t.Helper()
+	admin, err := platformdatabase.Open(context.Background(), databaseConfig)
+	if err != nil {
+		t.Fatalf("open configured PostgreSQL: %v", err)
+	}
+
+	schema := fmt.Sprintf("edge_collector_it_%d", time.Now().UnixNano())
+	quotedSchema := quotePostgresIdentifier(schema)
+	if err := admin.GORM.Exec("CREATE SCHEMA " + quotedSchema).Error; err != nil {
+		_ = admin.Close()
+		t.Fatalf("create PostgreSQL integration schema: %v", err)
+	}
+	if err := admin.Close(); err != nil {
+		t.Fatalf("close configured PostgreSQL: %v", err)
+	}
+
+	dsn := configuredPostgresDSN(t, databaseConfig, schema)
+	t.Cleanup(func() {
+		cleanup, err := platformdatabase.Open(context.Background(), databaseConfig)
+		if err != nil {
+			t.Errorf("reopen configured PostgreSQL for schema cleanup: %v", err)
+			return
+		}
+		defer func() { _ = cleanup.Close() }()
+		if err := cleanup.GORM.Exec("DROP SCHEMA " + quotedSchema + " CASCADE").Error; err != nil {
+			t.Errorf("drop PostgreSQL integration schema: %v", err)
+		}
+	})
+	return dsn
+}
+
+func configuredPostgresDSN(t *testing.T, databaseConfig config.DatabaseConfig, schema string) string {
+	t.Helper()
+	endpoint, err := url.Parse(databaseConfig.URL)
+	if err != nil {
+		t.Fatalf("parse configured PostgreSQL URL: %v", err)
+	}
+	query := endpoint.Query()
+	query.Set("search_path", schema)
+	endpoint.RawQuery = query.Encode()
+	endpoint.User = url.UserPassword(databaseConfig.Username, databaseConfig.Password)
+	return endpoint.String()
+}
+
+func quotePostgresIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
 func (database temporaryPostgres) waitUntilReady(t *testing.T) {
 	t.Helper()
 	endpoint, err := url.Parse(database.dsn)

@@ -151,7 +151,7 @@
 | backend check | `task backend:check` / `task check` | 通过；包含 Go tests 与 vet |
 | frontend checks | `task frontend:lint`、`task frontend:build`、`task check` | 通过；Vite 仅报告既有大 chunk warning |
 | SQLite MQTT persistence contract | `go test -tags=integration ./integration -run 'SQLiteMQTT' -count=1` | 通过 |
-| PostgreSQL MQTT persistence contract | `go test -tags=integration ./integration -run 'PostgresMQTT' -count=1` | 按测试约定 skip：Docker daemon 不可用 |
+| PostgreSQL MQTT persistence/runtime/topic/payload contract | `GOCACHE=/tmp/edge-collector-go-build go test -tags=integration ./integration -run '^TestPostgresMQTT(Persistence|RuntimeTopicPayload)Contract$' -count=1` | 通过；读取 `configs/config.dev.yaml` 连接 PostgreSQL，在随机 schema 内执行完整 schema/seed migration，测试后 schema 清理为 0 |
 | PostgreSQL integration | `task db:integration:postgres` | 未通过/环境阻塞：Docker Desktop integration 未接通；既有 PG helper 无法启动容器 |
 | real MQTT E2E | `task mqtt:integration`、`task mqtt:e2e:sqlite`、`task mqtt:e2e:postgres` | required 入口明确失败：缺少可用 Docker；未将其标记为通过 |
 | golangci-lint | `golangci-lint` | 未执行：工具未安装；`go test`/`go vet` 已通过 |

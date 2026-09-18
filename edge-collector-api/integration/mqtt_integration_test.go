@@ -4,14 +4,18 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/audit"
+	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/config"
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/mqtt"
 	"gorm.io/gorm"
 )
@@ -26,16 +30,167 @@ func TestSQLiteMQTTPersistenceContract(t *testing.T) {
 }
 
 func TestPostgresMQTTPersistenceContract(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil || exec.Command("docker", "info").Run() != nil {
-		t.Skip("Docker is required for PostgreSQL integration tests")
-	}
-
-	database := startPostgres(t)
-	runMigrations(t, projectRoot(t), database.dsn)
-	connection := openTemporaryDatabase(t, database.dsn)
+	dsn := postgresMQTTDSN(t)
+	runMigrations(t, projectRoot(t), dsn)
+	connection := openTemporaryDatabase(t, dsn)
 	defer func() { _ = connection.Close() }()
 
 	runMQTTPersistenceContract(t, connection.GORM)
+}
+
+func TestPostgresMQTTRuntimeTopicPayloadContract(t *testing.T) {
+	dsn := postgresMQTTDSN(t)
+	runMigrations(t, projectRoot(t), dsn)
+	connection := openTemporaryDatabase(t, dsn)
+	defer func() { _ = connection.Close() }()
+
+	repository := mqtt.NewRepository(connection.GORM)
+	current, err := repository.GetConfig(context.Background())
+	if err != nil {
+		t.Fatalf("load MQTT default config: %v", err)
+	}
+	input := configInputForIntegration(current)
+	input.Enabled = true
+	input.EdgeID = "edge-pg-integration"
+	input.TopicPrefix = "edge/telemetry"
+	input.ClientID = "postgres-runtime-client"
+	if _, err := repository.SaveConfig(context.Background(), input, audit.Event{Action: "mqtt.integration.runtime", Resource: "MQTT 配置"}); err != nil {
+		t.Fatalf("save PostgreSQL MQTT runtime config: %v", err)
+	}
+
+	transport := &postgresMQTTTransport{}
+	factory := func(_ context.Context, runtimeConfig mqtt.RuntimeConfig, callbacks mqtt.TransportCallbacks) (mqtt.Transport, error) {
+		transport.mu.Lock()
+		transport.runtimeConfig = runtimeConfig
+		transport.callbacks = callbacks
+		transport.mu.Unlock()
+		return transport, nil
+	}
+	runtime := mqtt.NewRuntime(repository, factory)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+
+	waitForMQTTIntegration(t, func() bool {
+		transport.mu.Lock()
+		defer transport.mu.Unlock()
+		return transport.callbacks.OnConnected != nil
+	})
+	transport.mu.Lock()
+	onConnected := transport.callbacks.OnConnected
+	transport.mu.Unlock()
+	onConnected()
+	waitForMQTTIntegration(t, func() bool { return runtime.State().State == mqtt.RuntimeStateConnected })
+
+	builder, err := mqtt.NewTopicBuilder(input.TopicPrefix, input.EdgeID)
+	if err != nil {
+		t.Fatalf("build PostgreSQL MQTT topic builder: %v", err)
+	}
+	state := runtime.State()
+	if state.SubscriptionFilter != builder.CommandSubscription() {
+		t.Fatalf("PostgreSQL MQTT subscription filter = %q, want %q", state.SubscriptionFilter, builder.CommandSubscription())
+	}
+	transport.mu.Lock()
+	runtimeConfig := transport.runtimeConfig
+	subscriptions := append([]string(nil), transport.subscriptions...)
+	transport.mu.Unlock()
+	if runtimeConfig.EdgeID != input.EdgeID || runtimeConfig.TopicPrefix != input.TopicPrefix || runtimeConfig.ClientID != input.ClientID {
+		t.Fatalf("PostgreSQL MQTT runtime config = %#v", runtimeConfig.Config)
+	}
+	if len(subscriptions) != 1 || subscriptions[0] != builder.CommandSubscription() {
+		t.Fatalf("PostgreSQL MQTT subscriptions = %v, want %q", subscriptions, builder.CommandSubscription())
+	}
+
+	at := time.Date(2026, 9, 18, 1, 2, 3, 456000000, time.FixedZone("CST", 8*60*60))
+	payload, err := mqtt.BuildEdgeStatus(input.EdgeID, "postgres-runtime-message", at, true, "connected")
+	if err != nil {
+		t.Fatalf("build PostgreSQL MQTT status payload: %v", err)
+	}
+	if err := runtime.Publish(ctx, mqtt.Publication{Topic: builder.EdgeStatus(), QoS: 1, Retain: true, Payload: payload}); err != nil {
+		t.Fatalf("publish PostgreSQL MQTT status payload: %v", err)
+	}
+	transport.mu.Lock()
+	publications := append([]mqtt.Publication(nil), transport.publications...)
+	transport.mu.Unlock()
+	if len(publications) != 1 || publications[0].Topic != builder.EdgeStatus() || publications[0].QoS != 1 || !publications[0].Retain {
+		t.Fatalf("PostgreSQL MQTT publication = %#v", publications)
+	}
+	var envelope mqtt.Envelope
+	if err := json.Unmarshal(publications[0].Payload, &envelope); err != nil {
+		t.Fatalf("decode PostgreSQL MQTT status payload: %v", err)
+	}
+	if envelope.Schema != mqtt.SchemaEdgeStatus || envelope.EdgeID != input.EdgeID || envelope.Timestamp != at.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("PostgreSQL MQTT status envelope = %#v", envelope)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("PostgreSQL MQTT runtime did not stop")
+	}
+}
+
+type postgresMQTTTransport struct {
+	mu            sync.Mutex
+	runtimeConfig mqtt.RuntimeConfig
+	callbacks     mqtt.TransportCallbacks
+	subscriptions []string
+	publications  []mqtt.Publication
+}
+
+func (t *postgresMQTTTransport) Publish(_ context.Context, publication mqtt.Publication) error {
+	t.mu.Lock()
+	t.publications = append(t.publications, mqtt.Publication{Topic: publication.Topic, QoS: publication.QoS, Retain: publication.Retain, Payload: append([]byte(nil), publication.Payload...)})
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *postgresMQTTTransport) Subscribe(_ context.Context, topic string, _ byte) error {
+	t.mu.Lock()
+	t.subscriptions = append(t.subscriptions, topic)
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *postgresMQTTTransport) Close() error { return nil }
+
+func waitForMQTTIntegration(t *testing.T, predicate func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if predicate() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("MQTT integration condition was not reached")
+}
+
+func postgresMQTTDSN(t *testing.T) string {
+	t.Helper()
+	root := projectRoot(t)
+	configDir := filepath.Join(root, "configs")
+	if _, err := os.Stat(filepath.Join(configDir, "config.dev.yaml")); err == nil {
+		t.Setenv("APP_ENV", config.EnvironmentDev)
+		t.Setenv("APP_CONFIG_PROFILE", "")
+		loaded, err := config.LoadFromDir(configDir)
+		if err != nil {
+			t.Fatalf("load local PostgreSQL config: %v", err)
+		}
+		if loaded.Database.Driver != "postgres" {
+			t.Fatalf("local integration database driver = %q, want postgres", loaded.Database.Driver)
+		}
+		return startConfiguredPostgresSchema(t, loaded.Database)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspect local PostgreSQL config: %v", err)
+	}
+
+	if _, err := exec.LookPath("docker"); err != nil || exec.Command("docker", "info").Run() != nil {
+		t.Skip("local PostgreSQL config is unavailable and Docker is required for PostgreSQL integration tests")
+	}
+	return startPostgres(t).dsn
 }
 
 func runMQTTPersistenceContract(t *testing.T, database *gorm.DB) {
@@ -89,7 +244,7 @@ func runMQTTPersistenceContract(t *testing.T, database *gorm.DB) {
 	acceptedPayload := `{"accepted":true}`
 	journal := mqtt.CommandJournal{
 		CommandID: commandID, DeviceID: "device-integration", CommandName: "close",
-		PayloadHash: "integration-command-hash", ReceivedAt: time.Now().UTC(),
+		PayloadHash: strings.Repeat("a", 64), ReceivedAt: time.Now().UTC(),
 		IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour), Status: mqtt.CommandStatusAccepted,
 	}
 	accepted := mqtt.OutboxMessage{
