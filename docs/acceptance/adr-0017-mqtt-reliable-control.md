@@ -127,6 +127,17 @@
 - [x] SQLite/PG × MQTT 5/3.1.1 的真实 Mosquitto 全矩阵已执行并通过。
 - [x] PostgreSQL MQTT contract、simulator tests、Go backend check 与文档/脚本验收结果已追加到“本次执行结果”。
 
+### #49～#54 MQTT 管理页拆分验收基线
+
+- [ ] 导航提供“运行总览”“连接配置”“Command Journal”三个独立入口，路由分别为 `/mqtt/overview`、`/mqtt/config`、`/mqtt/commands`；`/mqtt` 只负责兼容跳转。
+- [ ] 三个页面独立加载、独立鉴权并独立处理 loading/error/empty 状态；权限至少区分 `mqtt:overview:list`、`mqtt:config:list`、`mqtt:config:edit`、`mqtt:config:test`、`mqtt:command:list` 和 `mqtt:command:detail`。
+- [ ] 运行总览按 10 秒刷新，runtime 与 Reliable Outbox 独立加载；一方失败时保留另一方数据，并提示过期状态和最后成功刷新时间。
+- [ ] 连接配置支持完整字段分组、草稿连接测试、保存后的异步重连、未保存变更保护和 `keep/set/clear` Secret 语义；不泄露 Secret 或 ciphertext。
+- [ ] Command Journal 只读，按 `receivedAt` 倒序，支持状态、设备 ID、Command ID、命令名称筛选、服务端分页，并在存在 `ACCEPTED` 或 `RUNNING` 记录时按 5 秒刷新。
+- [ ] Journal 查询接口新增 `commandId` 和 `name`，详情不返回 command payload、result payload、payload hash、ciphertext 或 credential。
+- [ ] 不增加重试、取消、重放、导出、手动下发命令、SSE/WebSocket 或独立 Reliable Outbox 页面。
+- [ ] 所有 MQTT API 时间保持 RFC3339 UTC instant，页面统一按 `Asia/Shanghai` 展示；前端 lint、build、浏览器回归及相关后端契约检查通过。
+
 ## 阶段 checklist
 
 - [x] #40 MQTT config/secret/outbox/journal persistence

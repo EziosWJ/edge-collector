@@ -601,21 +601,19 @@ State 至少返回 MQTT state、connected/disconnected、lastError、reconnect m
 
 ## 16. React 管理页
 
-页面包含：
+MQTT 管理拆为三个独立页面：
 
-- enabled；
-- edgeId/broker/protocol/clientId；
-- username/password；
-- TLS CA/cert/private key；
-- keepalive/connect/reconnect；
-- raw interval；
-- outbox/journal limits；
-- test connection；
-- runtime state；
-- outbox health；
-- recent command journal。
+- `/mqtt/overview`：运行总览，观察 MQTT runtime、Reliable Outbox、Raw pending latest 和最近错误。
+- `/mqtt/config`：连接配置，管理现有 Broker、TLS、重连、Topic、Outbox、Journal 和 Command 调度配置。
+- `/mqtt/commands`：Command Journal，只读查询控制指令的持久化生命周期事实。
 
-已保存 secret 只显示“已配置”，不把 placeholder 提交为新 secret。
+`/mqtt` 仅作为兼容入口，跳转到当前用户可访问的默认页面，优先进入运行总览。三个页面独立加载、独立鉴权并独立处理 loading/error/empty 状态；Reliable Outbox 不单独成页。
+
+页面权限独立使用 `mqtt:overview:list`、`mqtt:config:list`、`mqtt:config:edit`、`mqtt:config:test`、`mqtt:command:list` 和 `mqtt:command:detail`。导航只展示用户可访问的子页面，Journal 权限不依赖连接配置权限。
+
+运行总览可见时每 10 秒刷新，运行状态和 Outbox 独立加载；刷新失败保留上次成功数据并标记过期。连接配置支持草稿测试、保存后的异步重连、未保存变更保护和 `keep/set/clear` Secret 语义；Secret 不回显，错误、日志、审计和响应不得泄露 Secret 或 ciphertext。Journal 支持状态、设备 ID、Command ID、命令名称筛选和服务端分页，存在 `ACCEPTED` 或 `RUNNING` 记录时每 5 秒刷新。
+
+Journal 详情只展示安全元数据和脱敏稳定错误，不返回 command payload、result payload、payload hash、ciphertext 或 credential；不增加重试、取消、重放、导出或手动下发命令。页面时间继续使用 API 的 RFC3339 UTC instant，并按 `Asia/Shanghai` 展示。
 
 配置写入 operation audit，但 audit 不记录 secret/ciphertext。
 
