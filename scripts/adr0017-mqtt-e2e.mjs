@@ -195,6 +195,28 @@ async function compose(...args) {
   return runCommand("docker", composeArgs(...args), repoRoot, composeEnvironment);
 }
 
+async function waitForHealthyService(service, timeout = 60000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const output = await compose("ps", "--format", "json", service);
+    const records = [];
+    for (const line of output.split("\n").map((value) => value.trim()).filter(Boolean)) {
+      try {
+        const value = JSON.parse(line);
+        if (Array.isArray(value)) records.push(...value);
+        else records.push(value);
+      } catch {
+        // Compose may emit a transient non-JSON status while the service is starting.
+      }
+    }
+    if (records.some((record) => record.Service === service && (record.Health === "healthy" || String(record.Status ?? "").includes("(healthy)")))) {
+      return;
+    }
+    await delay(250);
+  }
+  throw new Error(`Compose service did not become healthy: ${service}`);
+}
+
 function brokerAddress() {
   const parsed = new URL(brokerURL);
   return { host: parsed.hostname, port: Number(parsed.port || 1883) };
@@ -279,6 +301,19 @@ async function startCollector(filter) {
   return { child, collector };
 }
 
+async function waitForRetainedMessage(filter, predicate, timeout = 30000) {
+  const retained = await startCollector(filter);
+  try {
+    return await retained.collector.waitFor(
+      (message) => message.retain === 1 && predicate(message),
+      0,
+      timeout,
+    );
+  } finally {
+    await stopProcess(retained.child, "SIGTERM");
+  }
+}
+
 async function publishMQTT(topic, payload) {
   const command = mqttClientCommand("mosquitto_pub", [
     "-V", protocolArgument(),
@@ -327,7 +362,11 @@ async function startServices() {
   await compose("up", "-d", ...services);
   const address = brokerAddress();
   await waitForPort(address.host, address.port);
-  if (databaseKind === "postgres") await waitForPort("127.0.0.1", postgresPort);
+  await waitForHealthyService("broker");
+  if (databaseKind === "postgres") {
+    await waitForPort("127.0.0.1", postgresPort);
+    await waitForHealthyService("postgres");
+  }
 }
 
 async function startSimulator() {
@@ -367,7 +406,7 @@ function apiEnvironment() {
     APP_DATABASE__USERNAME: databaseKind === "postgres" ? composeEnvironment.MQTT_E2E_POSTGRES_USER : "",
     APP_DATABASE__PASSWORD: databaseKind === "postgres" ? composeEnvironment.MQTT_E2E_POSTGRES_PASSWORD : "",
     APP_DATABASE__URL: databaseKind === "postgres"
-      ? (process.env.MQTT_E2E_DATABASE_URL ?? `postgres://${composeEnvironment.MQTT_E2E_POSTGRES_USER}:${composeEnvironment.MQTT_E2E_POSTGRES_PASSWORD}@127.0.0.1:${postgresPort}/${composeEnvironment.MQTT_E2E_POSTGRES_DB}?sslmode=disable`)
+      ? (process.env.MQTT_E2E_DATABASE_URL ?? `postgres://127.0.0.1:${postgresPort}/${composeEnvironment.MQTT_E2E_POSTGRES_DB}?sslmode=disable`)
       : path.join(tempRoot, "e2e.db"),
     APP_FILE__STORAGE_ROOT: path.join(tempRoot, "uploads"),
     APP_HTTP__ADDRESS: `127.0.0.1:${apiPort}`,
@@ -402,7 +441,7 @@ function mqttConfigBody(enabled, passwordAction = "keep", overrides = {}) {
     edgeId: edgeID,
     brokerUrl: brokerURL,
     protocolVersion: protocol,
-    clientId,
+    clientId: clientID,
     username: "adr0017-e2e-user",
     passwordAction,
     password: passwordAction === "set" ? secret : "",
@@ -418,7 +457,10 @@ function mqttConfigBody(enabled, passwordAction = "keep", overrides = {}) {
     topicPrefix,
     rawPublishIntervalMs: 150,
     outboxMaxRows: 100,
-    outboxMaxBytes: 1024 * 1024,
+    // Keep the burst focused on command-queue admission. Each command
+    // reserves 256 KiB for its FINAL result; the dedicated capacity scenario
+    // below exercises the row boundary with outboxMaxRows=2.
+    outboxMaxBytes: 8 * 1024 * 1024,
     outboxRetentionDays: 7,
     commandJournalRetentionDays: 7,
     commandJournalMaxRows: 100,
@@ -531,10 +573,17 @@ async function mqttState(token) {
 }
 
 async function updateMQTTConfig(token, overrides = {}) {
-  return apiJSON("/api/v1/mqtt/config", token, {
+  const config = await apiJSON("/api/v1/mqtt/config", token, {
     method: "PUT",
     body: mqttConfigBody(true, "keep", overrides),
   });
+  await eventually(
+    "MQTT runtime connected after config update",
+    () => mqttState(token),
+    (state) => state.state === "CONNECTED" && state.connected === true,
+    30000,
+  );
+  return config;
 }
 
 function messageSchema(message, schema) {
@@ -725,7 +774,7 @@ async function runScenario() {
   assert.equal(edgeOnline.message.payload.schema, "edge-status/v1");
   assert.equal(edgeOnline.message.payload.data.reason, "connected");
   assert.equal(edgeOnline.message.qos, 1);
-  assert.equal(edgeOnline.message.retain, 1);
+  await waitForRetainedMessage(topicFor("edge-status"), (message) => message.payload.data?.online === true);
 
   const deviceStatus = await collector.waitFor(
     (message) => message.topic === topicFor("status", fixture.device.externalId ?? "device-adr0017-rtc")
@@ -733,8 +782,11 @@ async function runScenario() {
     0,
   );
   assert.equal(deviceStatus.message.qos, 1);
-  assert.equal(deviceStatus.message.retain, 1);
   assert.equal(deviceStatus.message.payload.data.status, "ONLINE");
+  await waitForRetainedMessage(
+    topicFor("status", fixture.device.externalId ?? "device-adr0017-rtc"),
+    (message) => message.payload.schema === "device-status/v1",
+  );
 
   const raw = await collector.waitFor(
     (message) => message.topic === topicFor("raw", "device-adr0017-rtc")
@@ -776,13 +828,16 @@ async function runScenario() {
     (message) => message.topic === topicFor("edge-status") && message.payload.data?.online === true,
     0,
   );
-  assert.equal(onlineAfterReconnect.message.retain, 1);
+  await waitForRetainedMessage(topicFor("edge-status"), (message) => message.payload.data?.online === true);
   const retainedDeviceStatus = await collector.waitFor(
     (message) => message.topic === topicFor("status", "device-adr0017-rtc")
       && message.payload.schema === "device-status/v1",
     0,
   );
-  assert.equal(retainedDeviceStatus.message.retain, 1);
+  await waitForRetainedMessage(
+    topicFor("status", "device-adr0017-rtc"),
+    (message) => message.payload.schema === "device-status/v1",
+  );
   const rawAfterReconnect = await collector.waitFor(
     (message) => message.topic === topicFor("raw", "device-adr0017-rtc")
       && message.payload.schema === "raw-register-snapshot/v1",
@@ -795,7 +850,7 @@ async function runScenario() {
       && message.payload.messageId !== firstEvent.message.payload.messageId
       && Date.parse(message.payload.timestamp) >= brokerOfflineAt
       && Date.parse(message.payload.timestamp) <= brokerReconnectAt,
-    firstEvent.index + 1,
+    0,
     30000,
   );
   assert.equal(recoveredEvent.message.qos, 1);
@@ -833,7 +888,7 @@ async function runScenario() {
     will.index + 1,
     30000,
   );
-  assert.equal(onlineAfterAPIRestart.message.retain, 1);
+  await waitForRetainedMessage(topicFor("edge-status"), (message) => message.payload.data?.online === true);
   await waitForDeviceOnline(token, fixture.device.id);
 
   const writeCountBeforeCommand = simulatorWriteCount();
@@ -902,14 +957,30 @@ async function runScenario() {
     commandTopic("device-adr0017-rtc"),
     commandPayload(commandID, "device-adr0017-rtc", { hour: 13, minute: 23, second: 40 + index }),
   )));
+  const burstProgress = async () => ({
+    receivedCommands: collector.messages.filter((message) => message.topic === commandTopic("device-adr0017-rtc") && burstIDs.includes(message.payload.commandId)).map((message) => message.payload.commandId),
+    messages: collector.messages.filter((message) => message.topic === commandResultTopic("device-adr0017-rtc") && burstIDs.includes(message.payload.data?.commandId) && ["SUCCEEDED", "FAILED", "EXPIRED"].includes(message.payload.data?.status)),
+    journals: await Promise.all(burstIDs.map(async (commandID) => {
+      const result = await requestJSON(`/api/v1/mqtt/commands/${encodeURIComponent(commandID)}`, token);
+      return { commandID, status: result.payload.data?.status ?? null, code: result.response.status };
+    })),
+  });
   await eventually(
     "command burst terminal results",
-    () => collector.messages.filter((message) => message.topic === commandResultTopic("device-adr0017-rtc") && burstIDs.includes(message.payload.data?.commandId) && ["SUCCEEDED", "FAILED", "EXPIRED"].includes(message.payload.data?.status)),
-    (messages) => new Set(messages.map((message) => message.payload.data.commandId)).size >= burstIDs.length,
+    burstProgress,
+    (progress) => {
+      const terminalStatuses = new Set(["SUCCEEDED", "FAILED", "EXPIRED"]);
+      const received = new Set(progress.receivedCommands);
+      const results = new Set(progress.messages.map((message) => message.payload.data.commandId));
+      const journalsTerminal = progress.journals.every((journal) => journal.code === 200 && terminalStatuses.has(journal.status));
+      return received.size >= burstIDs.length
+        && results.size >= burstIDs.length
+        && journalsTerminal;
+    },
     60000,
   );
-  const burstResults = collector.messages.slice(burstStart).filter((message) => burstIDs.includes(message.payload.data?.commandId) && message.payload.data?.status === "FAILED");
-  assert.ok(burstResults.some((message) => message.payload.data.error?.type === "QUEUE_FULL"), "bounded command burst must expose QUEUE_FULL");
+  const burstFailures = collector.messages.slice(burstStart).filter((message) => burstIDs.includes(message.payload.data?.commandId) && message.payload.data?.status === "FAILED");
+  assert.ok(burstFailures.some((message) => message.payload.data.error?.type === "QUEUE_FULL"), "bounded command burst must expose QUEUE_FULL");
   await delay(1200);
   const pollLinesAfterBurst = simulatorLogLines().filter((line) => /function=03 address=100 count=3 result=OK/.test(line)).length;
   assert.ok(pollLinesAfterBurst > pollLinesBeforeBurst, "command burst must not permanently starve ordinary poll");
@@ -925,12 +996,20 @@ async function runScenario() {
     commandTopic("device-adr0017-rtc"),
     commandPayload(commandID, "device-adr0017-rtc", { hour: 14, minute: 24, second: 50 + index }),
   )));
-  const capacityResults = await eventually(
+  const capacityProgress = async () => ({
+    messages: collector.messages.slice(capacityStart).filter((message) => capacityIDs.includes(message.payload.data?.commandId) && ["SUCCEEDED", "FAILED"].includes(message.payload.data?.status)),
+    journals: await Promise.all(capacityIDs.map(async (commandID) => {
+      const result = await requestJSON(`/api/v1/mqtt/commands/${encodeURIComponent(commandID)}`, token);
+      return { commandID, status: result.payload.data?.status ?? null, code: result.response.status };
+    })),
+  });
+  const capacityProgressResult = await eventually(
     "capacity command terminal result",
-    () => collector.messages.slice(capacityStart).filter((message) => capacityIDs.includes(message.payload.data?.commandId) && ["SUCCEEDED", "FAILED"].includes(message.payload.data?.status)),
-    (messages) => messages.length >= 1,
+    capacityProgress,
+    (progress) => progress.messages.length >= 1,
     40000,
   );
+  const capacityResults = capacityProgressResult.messages;
   await delay(2500);
   assert.ok(simulatorWriteCount() <= capacityWriteBaseline + 1, "capacity boundary must not execute every over-capacity command");
   const capacityFailure = capacityResults.find((message) => message.payload.data?.error?.type === "RELIABLE_RESULT_CAPACITY_EXHAUSTED");
@@ -946,6 +1025,7 @@ async function runScenario() {
 
   // Stop/restart with a final result already durable but broker unavailable.
   await updateMQTTConfig(token, { outboxMaxRows: 100 });
+  await eventually("empty outbox before final recovery", () => outboxStats(token), (stats) => Number(stats.rows) === 0, 30000);
   const restartCommandID = "command-adr0017-final-before-puback";
   const restartBaseline = simulatorWriteCount();
   await stopBroker();
@@ -954,6 +1034,12 @@ async function runScenario() {
   // The command publisher cannot reach a stopped broker, so reconnect only to
   // submit the command and then immediately stop the broker before final ACK.
   await startBroker();
+  await eventually(
+    "MQTT runtime connected before final restart command",
+    () => mqttState(token),
+    (state) => state.state === "CONNECTED" && state.connected === true,
+    30000,
+  );
   const commandPublisherPayload = commandPayload(restartCommandID, "device-adr0017-rtc", { hour: 15, minute: 25, second: 55 });
   await publishMQTT(commandTopic("device-adr0017-rtc"), commandPublisherPayload);
   await eventually(
