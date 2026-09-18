@@ -55,9 +55,10 @@ try {
     assert.equal(await desktop.getByTestId("summary-degraded").innerText(), "1");
     assert.equal(await desktop.getByTestId("summary-unconfigured").innerText(), "1");
     assert.equal(await desktop.getByTestId("summary-offline").innerText(), "1");
-    for (const [channelID, status] of [[10, "空闲"], [11, "启动中"], [12, "在线"], [13, "部分失败"], [14, "离线"]]) {
-      const card = desktop.getByTestId(`channel-runtime-${channelID}`);
-      await card.getByText(status, { exact: true }).waitFor();
+    for (const [channelID, name, status] of [[1, "现场 RS485", "部分失败"], [2, "网络设备组", "部分失败"], [3, "启动设备组", "启动中"]]) {
+      const card = desktop.getByTestId(`channel-group-${channelID}`);
+      await card.getByText(name, { exact: true }).waitFor();
+      await card.getByText(status, { exact: true }).first().waitFor();
     }
     await desktop.getByTestId("register-display-toolbar").waitFor();
     await desktop.getByRole("heading", { name: "原始寄存器", exact: true }).waitFor();
@@ -66,17 +67,31 @@ try {
     await desktop.getByRole("columnheader", { name: "值（HEX）", exact: true }).waitFor();
     assert.equal(await desktop.getByText("0x0BB8", { exact: true }).count(), 1);
     assert.equal(await desktop.getByText("有效", { exact: true }).count(), 3);
+    await desktop.getByRole("button", { name: "BIN", exact: true }).click();
+    const bitRuler = desktop.getByTestId("register-bit-ruler-0");
+    await bitRuler.locator('[aria-hidden="true"]').getByText("15", { exact: true }).waitFor();
+    await bitRuler.locator('[aria-hidden="true"]').getByText("0", { exact: true }).waitFor();
+    assert.equal(
+      (await desktop.getByTestId("register-value-0").innerText()).replace(/\s/g, ""),
+      "0000101110111000",
+    );
 
     const desktopLayout = await desktop.evaluate(() => {
       const nav = document.querySelector('[data-testid="realtime-device-nav"]');
+      const workspace = nav?.parentElement;
+      const detail = workspace?.children[1];
+      const navWidth = nav?.getBoundingClientRect().width ?? 0;
+      const detailWidth = detail?.getBoundingClientRect().width ?? 0;
       return {
         viewportWidth: document.documentElement.clientWidth,
         pageWidth: document.documentElement.scrollWidth,
-        navWidth: nav?.getBoundingClientRect().width ?? 0,
+        navWidth,
+        detailWidth,
+        navRatio: navWidth / (navWidth + detailWidth),
       };
     });
     assert.ok(desktopLayout.pageWidth <= desktopLayout.viewportWidth + 1, JSON.stringify(desktopLayout));
-    assert.ok(desktopLayout.navWidth >= 280 && desktopLayout.navWidth <= 340, JSON.stringify(desktopLayout));
+    assert.ok(desktopLayout.navRatio >= 0.27 && desktopLayout.navRatio <= 0.33, JSON.stringify(desktopLayout));
 
     await desktop.getByRole("button", { name: "DEC", exact: true }).click();
     assert.equal(await desktop.getByTestId("register-value-0").innerText(), "3000");
@@ -93,6 +108,16 @@ try {
     await desktop.getByText("等待首次采集").last().waitFor();
     await desktop.getByTestId("device-nav-4").click();
     await desktop.getByText("离线").last().waitFor();
+    await desktop.getByLabel("搜索通道或设备").fill("南侧");
+    await desktop.getByTestId("device-nav-2").waitFor();
+    assert.equal(await desktop.getByTestId("device-nav-1").count(), 0);
+    await desktop.getByLabel("搜索通道或设备").fill("");
+    await desktop.getByLabel("设备状态筛选").selectOption("OFFLINE");
+    await desktop.getByTestId("device-nav-4").waitFor();
+    assert.equal(await desktop.getByTestId("device-nav-2").count(), 0);
+    await desktop.getByLabel("设备状态筛选").selectOption("ALL");
+    await desktop.getByRole("button", { name: "暂停刷新", exact: true }).click();
+    await desktop.getByText("自动刷新已暂停", { exact: true }).waitFor();
     await desktop.getByTestId("device-nav-2").focus();
     assert.equal(await desktop.evaluate(() => document.activeElement?.tagName), "BUTTON");
     await desktop.close();

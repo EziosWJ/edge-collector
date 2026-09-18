@@ -120,11 +120,9 @@ const states: AcquisitionCurrentState[] = [
 ];
 
 const channelStates = [
-  { channelId: 10, channelName: "空闲通道", protocol: "MODBUS_RTU", status: "IDLE" },
-  { channelId: 11, channelName: "启动通道", protocol: "MODBUS_TCP", status: "STARTING" },
-  { channelId: 12, channelName: "在线通道", protocol: "MODBUS_UDP", status: "ONLINE" },
-  { channelId: 13, channelName: "降级通道", protocol: "MODBUS_RTU_OVER_UDP", status: "DEGRADED", lastError: "读取超时" },
-  { channelId: 14, channelName: "离线通道", protocol: "MODBUS_TCP", status: "OFFLINE", lastError: "设备无响应" },
+  { channelId: 1, channelName: "现场 RS485", protocol: "MODBUS_RTU", status: "DEGRADED", lastError: "读取超时" },
+  { channelId: 2, channelName: "网络设备组", protocol: "MODBUS_TCP", status: "DEGRADED", lastError: "设备无响应" },
+  { channelId: 3, channelName: "启动设备组", protocol: "MODBUS_UDP", status: "STARTING" },
 ];
 
 const nativeFetch = window.fetch.bind(window);
