@@ -45,6 +45,69 @@ func TestLatestProjectorCoalescesRawAndKeepsQoSContract(t *testing.T) {
 	}
 }
 
+func TestLatestProjectorPublishesOfflineTransitionOnceAndRecoveryImmediately(t *testing.T) {
+	builder, err := NewTopicBuilder("edge", "edge-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector := NewLatestStateProjector(&recordingPublisher{}, builder, time.Minute)
+	value := uint16(42)
+	state := acquisition.CurrentState{
+		DeviceID:   1,
+		ExternalID: "device-01",
+		Status:     acquisition.StatusOnline,
+		RegisterBlocks: []acquisition.RegisterBlockState{{
+			Values: []*uint16{&value},
+			Valid:  true,
+		}},
+	}
+	now := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	finish := func(kind string) *projectionTask {
+		task, _ := projector.nextTask(now)
+		if task == nil || task.kind != kind {
+			t.Fatalf("task = %#v, want %s", task, kind)
+		}
+		projector.finish(*task, nil, now)
+		return task
+	}
+
+	projector.OnCycle(state)
+	finish("status")
+	finish("raw")
+
+	state.Status = acquisition.StatusOffline
+	state.RegisterBlocks[0].Valid = false
+	projector.OnCycle(state)
+	finish("status")
+	offlineRaw := finish("raw")
+	if offlineRaw.state.Status != acquisition.StatusOffline || offlineRaw.state.RegisterBlocks[0].Valid || offlineRaw.state.RegisterBlocks[0].Values[0] == nil || *offlineRaw.state.RegisterBlocks[0].Values[0] != value {
+		t.Fatalf("offline raw state = %#v, want invalid last-known value", offlineRaw.state)
+	}
+
+	projector.OnCycle(state)
+	finish("status")
+	if task, _ := projector.nextTask(now); task != nil {
+		t.Fatalf("continued offline cycle produced task = %#v, want no raw task", task)
+	}
+
+	state.Status = acquisition.StatusOnline
+	state.RegisterBlocks[0].Valid = true
+	projector.OnCycle(state)
+	finish("status")
+	finish("raw")
+
+	state.Status = acquisition.StatusOffline
+	state.RegisterBlocks[0].Valid = false
+	projector.OnCycle(state)
+	finish("status")
+	finish("raw")
+
+	state.Status = acquisition.StatusDegraded
+	projector.OnCycle(state)
+	finish("status")
+	finish("raw")
+}
+
 func TestLatestProjectorRetryAndRepublishRemainBounded(t *testing.T) {
 	builder, err := NewTopicBuilder("edge", "edge-01")
 	if err != nil {

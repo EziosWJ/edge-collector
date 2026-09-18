@@ -17,17 +17,18 @@ type Publisher interface {
 }
 
 type projectionEntry struct {
-	state       acquisition.CurrentState
-	generation  uint64
-	statusDue   bool
-	rawDue      bool
-	rawReady    bool
-	forceRaw    bool
-	lastRawAt   time.Time
-	statusRetry time.Time
-	rawRetry    time.Time
-	statusTry   int
-	rawTry      int
+	state           acquisition.CurrentState
+	generation      uint64
+	lastCycleStatus acquisition.CommunicationStatus
+	statusDue       bool
+	rawDue          bool
+	rawReady        bool
+	forceRaw        bool
+	lastRawAt       time.Time
+	statusRetry     time.Time
+	rawRetry        time.Time
+	statusTry       int
+	rawTry          int
 }
 
 type projectionTask struct {
@@ -108,7 +109,9 @@ func (p *LatestStateProjector) OnState(state acquisition.CurrentState) {
 
 // OnCycle is suitable for acquisition.RuntimeScriptConfig.CycleSink. It is
 // called after static reads and after_poll have completed, so the raw latest
-// snapshot cannot be observed halfway through a device cycle.
+// snapshot cannot be observed halfway through a device cycle. Repeated cycles
+// that remain offline update the latest state without creating duplicate raw
+// work; entering or leaving offline forces one immediate raw publication.
 func (p *LatestStateProjector) OnCycle(state acquisition.CurrentState) {
 	p.upsert(state, true)
 }
@@ -120,6 +123,7 @@ func (p *LatestStateProjector) upsert(state acquisition.CurrentState, cycleCompl
 	state = cloneCurrentState(state)
 	p.mu.Lock()
 	entry, exists := p.entries[state.ExternalID]
+	previousCycleStatus := entry.lastCycleStatus
 	entry.state = state
 	entry.generation++
 	if !entry.statusDue {
@@ -132,8 +136,16 @@ func (p *LatestStateProjector) upsert(state acquisition.CurrentState, cycleCompl
 	}
 	entry.statusDue = true
 	if cycleComplete {
-		entry.rawDue = true
-		entry.rawReady = true
+		enteredOffline := state.Status == acquisition.StatusOffline && previousCycleStatus != acquisition.StatusOffline
+		recovered := state.Status != acquisition.StatusOffline && previousCycleStatus == acquisition.StatusOffline
+		if state.Status != acquisition.StatusOffline || enteredOffline {
+			entry.rawDue = true
+			entry.rawReady = true
+			if enteredOffline || recovered {
+				entry.forceRaw = true
+			}
+		}
+		entry.lastCycleStatus = state.Status
 	}
 	if !exists {
 		entry.lastRawAt = time.Time{}
