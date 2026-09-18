@@ -44,7 +44,7 @@
 ## 验证计划
 
 - 后端：覆盖收件人隔离、ADMIN 授权、角色集合变化和已读语义的测试，以及通知、角色变更、审计原子提交的 PostgreSQL 与 SQLite 集成测试。
-- 按项目入口执行 `task db:migrate`、`task backend:check` 和 `task backend:integration`；集成测试使用隔离数据库。
+- 按项目入口执行 `task db:migrate`、`task backend:check` 和 `task db:integration:postgres`；集成测试使用隔离数据库。
 - 前端：执行 `task frontend:lint` 和 `task frontend:build`，验证管理员发布、普通用户收件、详情已读、全部已读及刷新流程。
 
 ## 实现前需验证的现状

@@ -34,15 +34,17 @@ project/
 - `task api`：启动 Go API，默认监听 `:8099`。
 - `task web`：启动 React 开发服务器，默认监听 `:5173`。
 - `task dev`：先执行数据库 migration，再并行启动 API 和前端；适合全新环境或需要确保数据库已更新时使用。
-- `task backend:test`：执行后端单元测试。
+- `task test`：执行后端单元测试。
 - `task backend:check`：执行后端测试和 `go vet`。
-- `task backend:integration`：执行 PostgreSQL 集成测试，需要 Docker。
+- `task db:integration:postgres`：执行 PostgreSQL 数据库集成契约，需要 Docker。
+- `task db:integration:sqlite`：执行 SQLite 数据库集成契约。
 - `task frontend:lint`：执行前端 ESLint。
 - `task frontend:build`：执行前端 TypeScript/Vite 构建。
-- `task check`：执行后端检查、前端 lint 和前端构建。
-- `task test`：执行默认后端测试集。
+- `task frontend:browser-test`：执行前端浏览器回归测试，不启动 API、Docker 或模拟器。
+- `task check`：执行后端检查、前端 lint/build 和浏览器回归测试。
+- `task db:check`：执行后端检查以及 PostgreSQL、SQLite 两套数据库集成契约。
 
-推荐的 Agent 验证顺序：后端改动执行 `task backend:check`，前端改动执行 `task frontend:lint` 和 `task frontend:build`，涉及数据库结构时先执行 `task db:migrate`，需要联调时再启动 `task api` 或 `task dev`。长时间运行的任务必须配合健康检查或明确的超时与清理；API 使用 `/health` 检查存活、`/ready` 检查数据库就绪。
+日常开发优先使用 `task dev`（SQLite 场景使用 `task dev:sqlite`）。Agent 验证时，后端改动执行 `task backend:check`，前端改动执行 `task frontend:lint`、`task frontend:build` 或 `task frontend:browser-test`，跨后端和前端改动执行 `task check`，涉及数据库兼容性时执行 `task db:check`。专项 E2E、模拟器和 MQTT 验收只在改动范围涉及对应链路时运行。长时间运行的任务必须配合健康检查或明确的超时与清理；API 使用 `/health` 检查存活、`/ready` 检查数据库就绪。
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
