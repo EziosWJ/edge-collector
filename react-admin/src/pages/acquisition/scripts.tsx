@@ -43,6 +43,7 @@ import { TableToolbar } from "@/components/common/table-toolbar";
 import { toast } from "@/components/common/toast-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useListPage } from "@/hooks/use-list-page";
 import { getErrorMessage } from "@/lib/api-error";
@@ -77,12 +78,20 @@ const scriptSchema = z.object({
 });
 
 type ScriptFormValues = z.infer<typeof scriptSchema>;
-type ScriptFilterState = { name: string };
+type ScriptFilterState = {
+  name: string;
+  published: "" | "0" | "1";
+  bound: "" | "0" | "1";
+};
 type ConfirmAction =
   | { type: "delete"; script: AcquisitionScript }
   | { type: "rollback"; script: AcquisitionScript; version: AcquisitionScriptVersion };
 
-const DEFAULT_FILTERS: ScriptFilterState = { name: "" };
+const DEFAULT_FILTERS: ScriptFilterState = {
+  name: "",
+  published: "",
+  bound: "",
+};
 
 const errorTypeLabels: Record<AcquisitionScriptErrorType, string> = {
   SCRIPT_COMPILE: "脚本编译",
@@ -129,6 +138,8 @@ export function AcquisitionScriptsPage() {
       page,
       pageSize,
       name: filters.name.trim() || undefined,
+      published: filters.published === "" ? undefined : filters.published === "1",
+      bound: filters.bound === "" ? undefined : filters.bound === "1",
     }),
     defaultPageSize: 10,
     onError: (error) =>
@@ -486,6 +497,24 @@ export function AcquisitionScriptsPage() {
             placeholder="脚本名称"
             aria-label="筛选脚本名称"
           />
+          <Select
+            value={list.filters.published}
+            onChange={(event) => list.setFilter("published", event.target.value as ScriptFilterState["published"])}
+            aria-label="筛选发布状态"
+          >
+            <option value="">全部发布状态</option>
+            <option value="1">已发布</option>
+            <option value="0">未发布</option>
+          </Select>
+          <Select
+            value={list.filters.bound}
+            onChange={(event) => list.setFilter("bound", event.target.value as ScriptFilterState["bound"])}
+            aria-label="筛选绑定状态"
+          >
+            <option value="">全部绑定状态</option>
+            <option value="1">已绑定设备</option>
+            <option value="0">未绑定设备</option>
+          </Select>
         </form>
       </SearchFilterBar>
 

@@ -136,11 +136,15 @@ type RegisterBlockInput struct {
 }
 
 type ChannelQuery struct {
+	Name     string
+	Protocol string
+	Enabled  *int
 	Page     int
 	PageSize int
 }
 
 type DeviceQuery struct {
+	Name      string
 	Page      int
 	PageSize  int
 	ChannelID *int64
@@ -183,9 +187,11 @@ type ScriptVersion struct {
 func (ScriptVersion) TableName() string { return "acquisition_script_version" }
 
 type ScriptQuery struct {
-	Name     string
-	Page     int
-	PageSize int
+	Name      string
+	Published *bool
+	Bound     *bool
+	Page      int
+	PageSize  int
 }
 
 type ScriptInput struct {

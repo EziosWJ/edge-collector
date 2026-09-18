@@ -32,6 +32,7 @@ import type {
   AcquisitionDevice,
   AcquisitionDeviceInput,
   AcquisitionScript,
+  ApiStatus,
   DataTableColumn,
 } from "@/types";
 
@@ -84,11 +85,15 @@ const deviceSchema = z.object({
 type DeviceFormValues = z.infer<typeof deviceSchema>;
 type ConfirmState = AcquisitionDevice | null;
 type DeviceFilterState = {
+  name: string;
   channelId: string;
+  enabled: "" | "0" | "1";
 };
 
 const DEFAULT_FILTERS: DeviceFilterState = {
+  name: "",
   channelId: "",
+  enabled: "",
 };
 
 const emptyValues: DeviceFormValues = {
@@ -150,7 +155,9 @@ export function AcquisitionDevicesPage() {
     toQuery: (filters, page, pageSize) => ({
       page,
       pageSize,
+      name: filters.name.trim() || undefined,
       ...(filters.channelId ? { channelId: Number(filters.channelId) } : {}),
+      enabled: filters.enabled === "" ? undefined : (Number(filters.enabled) as ApiStatus),
     }),
     defaultPageSize: 10,
     onError: (error) =>
@@ -339,6 +346,12 @@ export function AcquisitionDevicesPage() {
         }
       >
         <form className="contents" onSubmit={(event) => { event.preventDefault(); list.submitFilters(); }}>
+          <Input
+            value={list.filters.name}
+            onChange={(event) => list.setFilter("name", event.target.value)}
+            placeholder="设备名称"
+            aria-label="筛选设备名称"
+          />
           <Select
             value={list.filters.channelId}
             onChange={(event) => list.setFilter("channelId", event.target.value)}
@@ -351,6 +364,15 @@ export function AcquisitionDevicesPage() {
                 {channel.name}（{channel.protocol}）
               </option>
             ))}
+          </Select>
+          <Select
+            value={list.filters.enabled}
+            onChange={(event) => list.setFilter("enabled", event.target.value as DeviceFilterState["enabled"])}
+            aria-label="筛选状态"
+          >
+            <option value="">全部状态</option>
+            <option value="1">启用</option>
+            <option value="0">禁用</option>
           </Select>
         </form>
       </SearchFilterBar>

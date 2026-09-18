@@ -47,9 +47,15 @@ export type AcquisitionDevice = {
   updateTime?: string | null;
 };
 
-export type AcquisitionChannelQuery = Partial<ApiPageRequest>;
+export type AcquisitionChannelQuery = Partial<ApiPageRequest> & {
+  name?: string;
+  protocol?: AcquisitionProtocol;
+  enabled?: ApiStatus;
+};
 export type AcquisitionDeviceQuery = Partial<ApiPageRequest> & {
+  name?: string;
   channelId?: number;
+  enabled?: ApiStatus;
 };
 
 export type AcquisitionChannelInput = Omit<
@@ -198,6 +204,8 @@ export type AcquisitionScriptInput = Pick<
 
 export type AcquisitionScriptQuery = Partial<ApiPageRequest> & {
   name?: string;
+  published?: boolean;
+  bound?: boolean;
 };
 
 export type AcquisitionScriptPage = ApiPageResult<AcquisitionScript>;

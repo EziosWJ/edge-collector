@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -16,6 +16,7 @@ import { Field } from "@/components/common/field";
 import { FormDialog } from "@/components/common/form-dialog";
 import { PageHeader } from "@/components/common/page-header";
 import { Pagination } from "@/components/common/pagination";
+import { SearchFilterBar } from "@/components/common/search-filter-bar";
 import { StatusTag } from "@/components/common/status-tag";
 import { toast } from "@/components/common/toast-store";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ import type {
   AcquisitionChannelInput,
   DataTableColumn,
   AcquisitionProtocol,
+  ApiStatus,
 } from "@/types";
 
 const protocolOptions: Array<{ value: AcquisitionProtocol; label: string }> = [
@@ -60,6 +62,17 @@ const channelSchema = z.object({
 
 type ChannelFormValues = z.infer<typeof channelSchema>;
 type ConfirmState = AcquisitionChannel | null;
+type ChannelFilterState = {
+  name: string;
+  protocol: "" | AcquisitionProtocol;
+  enabled: "" | "0" | "1";
+};
+
+const DEFAULT_FILTERS: ChannelFilterState = {
+  name: "",
+  protocol: "",
+  enabled: "",
+};
 
 const emptyValues: ChannelFormValues = {
   name: "",
@@ -102,10 +115,16 @@ function protocolLabel(protocol: AcquisitionProtocol) {
 }
 
 export function AcquisitionChannelsPage() {
-  const list = useListPage<Record<string, never>, AcquisitionChannel>({
+  const list = useListPage<ChannelFilterState, AcquisitionChannel>({
     fetch: getAcquisitionChannels,
-    defaultFilters: {},
-    toQuery: (_filters, page, pageSize) => ({ page, pageSize }),
+    defaultFilters: DEFAULT_FILTERS,
+    toQuery: (filters, page, pageSize) => ({
+      page,
+      pageSize,
+      name: filters.name.trim() || undefined,
+      protocol: filters.protocol || undefined,
+      enabled: filters.enabled === "" ? undefined : (Number(filters.enabled) as ApiStatus),
+    }),
     defaultPageSize: 10,
     onError: (error) =>
       toast.error({
@@ -239,6 +258,48 @@ export function AcquisitionChannelsPage() {
           </Button>
         }
       />
+      <SearchFilterBar
+        actions={
+          <>
+            <Button variant="secondary" onClick={list.resetFilters}>
+              <RotateCcw className="h-4 w-4" aria-hidden />
+              重置
+            </Button>
+            <Button variant="primary" onClick={list.submitFilters}>
+              <Search className="h-4 w-4" aria-hidden />
+              查询
+            </Button>
+          </>
+        }
+      >
+        <form className="contents" onSubmit={(event) => { event.preventDefault(); list.submitFilters(); }}>
+          <Input
+            value={list.filters.name}
+            onChange={(event) => list.setFilter("name", event.target.value)}
+            placeholder="通道名称"
+            aria-label="筛选通道名称"
+          />
+          <Select
+            value={list.filters.protocol}
+            onChange={(event) => list.setFilter("protocol", event.target.value as ChannelFilterState["protocol"])}
+            aria-label="筛选协议"
+          >
+            <option value="">全部协议</option>
+            {protocolOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </Select>
+          <Select
+            value={list.filters.enabled}
+            onChange={(event) => list.setFilter("enabled", event.target.value as ChannelFilterState["enabled"])}
+            aria-label="筛选状态"
+          >
+            <option value="">全部状态</option>
+            <option value="1">启用</option>
+            <option value="0">禁用</option>
+          </Select>
+        </form>
+      </SearchFilterBar>
       <DataTableCard
         toolbar={
           <div className="flex items-center justify-between border-b border-border px-card py-space-3">

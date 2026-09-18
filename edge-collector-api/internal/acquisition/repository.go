@@ -53,6 +53,15 @@ func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
 func (r *Repository) PageChannels(ctx context.Context, q ChannelQuery) (Page[Channel], error) {
 	q = normalizeChannelQuery(q)
 	db := r.db.WithContext(ctx).Model(&Channel{}).Where("deleted=0")
+	if name := strings.TrimSpace(q.Name); name != "" {
+		db = db.Where("name LIKE ?", "%"+name+"%")
+	}
+	if protocol := strings.TrimSpace(q.Protocol); protocol != "" {
+		db = db.Where("protocol = ?", protocol)
+	}
+	if q.Enabled != nil {
+		db = db.Where("enabled = ?", *q.Enabled)
+	}
 	var page Page[Channel]
 	if err := db.Count(&page.Total).Error; err != nil {
 		return page, err
@@ -143,6 +152,9 @@ func (r *Repository) ScriptNameExists(ctx context.Context, name string, excludeI
 func (r *Repository) PageDevices(ctx context.Context, q DeviceQuery) (Page[Device], error) {
 	q = normalizeDeviceQuery(q)
 	db := r.db.WithContext(ctx).Model(&Device{}).Where("deleted=0")
+	if name := strings.TrimSpace(q.Name); name != "" {
+		db = db.Where("name LIKE ?", "%"+name+"%")
+	}
 	if q.ChannelID != nil {
 		db = db.Where("channel_id=?", *q.ChannelID)
 	}
@@ -545,6 +557,21 @@ func (r *Repository) PageScripts(ctx context.Context, q ScriptQuery) (Page[Scrip
 	db := r.db.WithContext(ctx).Model(&Script{}).Where("deleted=0")
 	if name := strings.TrimSpace(paging.Name); name != "" {
 		db = db.Where("name LIKE ?", "%"+name+"%")
+	}
+	if paging.Published != nil {
+		if *paging.Published {
+			db = db.Where("published_version_id IS NOT NULL")
+		} else {
+			db = db.Where("published_version_id IS NULL")
+		}
+	}
+	if paging.Bound != nil {
+		boundCondition := "EXISTS (SELECT 1 FROM acquisition_device WHERE acquisition_device.script_id = acquisition_script.id AND acquisition_device.deleted = 0)"
+		if *paging.Bound {
+			db = db.Where(boundCondition)
+		} else {
+			db = db.Where("NOT " + boundCondition)
+		}
 	}
 	if err := db.Count(&page.Total).Error; err != nil {
 		return page, err

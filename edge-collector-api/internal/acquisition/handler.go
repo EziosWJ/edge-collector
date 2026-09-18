@@ -209,10 +209,25 @@ func (r scriptRequest) input() ScriptInput {
 // @Security BearerAuth
 // @Param page query int false "页码"
 // @Param pageSize query int false "每页条数"
+// @Param name query string false "通道名称"
+// @Param protocol query string false "通信协议"
+// @Param enabled query int false "状态：0 或 1"
 // @Success 200 {object} ApiEnvelope
 // @Router /api/v1/acquisition/channels [get]
 func (h *Handler) pageChannels(c *gin.Context) {
-	value, err := h.service.PageChannels(c, ChannelQuery{Page: queryInt(c, "page", 1), PageSize: queryInt(c, "pageSize", 20)})
+	query := ChannelQuery{
+		Name: c.Query("name"), Protocol: c.Query("protocol"),
+		Page: queryInt(c, "page", 1), PageSize: queryInt(c, "pageSize", 20),
+	}
+	if raw := c.Query("enabled"); raw != "" {
+		value, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || (value != Enabled && value != Disabled) {
+			badRequest(c)
+			return
+		}
+		query.Enabled = &value
+	}
+	value, err := h.service.PageChannels(c, query)
 	h.write(c, value, err)
 }
 
@@ -293,10 +308,14 @@ func (h *Handler) deleteChannel(c *gin.Context) {
 // @Param page query int false "页码"
 // @Param pageSize query int false "每页条数"
 // @Param channelId query int false "通信通道 ID"
+// @Param name query string false "设备名称"
+// @Param enabled query int false "状态：0 或 1"
 // @Success 200 {object} ApiEnvelope
 // @Router /api/v1/acquisition/devices [get]
 func (h *Handler) pageDevices(c *gin.Context) {
-	query := DeviceQuery{Page: queryInt(c, "page", 1), PageSize: queryInt(c, "pageSize", 20)}
+	query := DeviceQuery{
+		Name: c.Query("name"), Page: queryInt(c, "page", 1), PageSize: queryInt(c, "pageSize", 20),
+	}
 	if raw := c.Query("channelId"); raw != "" {
 		value, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || value < 1 {
@@ -304,6 +323,14 @@ func (h *Handler) pageDevices(c *gin.Context) {
 			return
 		}
 		query.ChannelID = &value
+	}
+	if raw := c.Query("enabled"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || (value != Enabled && value != Disabled) {
+			badRequest(c)
+			return
+		}
+		query.Enabled = &value
 	}
 	value, err := h.service.PageDevices(c, query)
 	h.write(c, value, err)
@@ -426,13 +453,28 @@ func (h *Handler) unbindDeviceScript(c *gin.Context) {
 // @Param page query int false "页码"
 // @Param pageSize query int false "每页条数"
 // @Param name query string false "脚本名称"
+// @Param published query int false "发布状态：0 或 1"
+// @Param bound query int false "绑定设备状态：0 或 1"
 // @Success 200 {object} ApiEnvelope
 // @Failure 401 {object} ApiEnvelope
 // @Router /api/v1/acquisition/scripts [get]
 func (h *Handler) pageScripts(c *gin.Context) {
-	value, err := h.service.PageScripts(c, ScriptQuery{
+	query := ScriptQuery{
 		Name: c.Query("name"), Page: queryInt(c, "page", 1), PageSize: queryInt(c, "pageSize", 20),
-	})
+	}
+	if published, ok := queryOptionalFlag(c, "published"); !ok {
+		badRequest(c)
+		return
+	} else {
+		query.Published = published
+	}
+	if bound, ok := queryOptionalFlag(c, "bound"); !ok {
+		badRequest(c)
+		return
+	} else {
+		query.Bound = bound
+	}
+	value, err := h.service.PageScripts(c, query)
 	h.write(c, value, err)
 }
 
@@ -720,6 +762,19 @@ func queryInt(c *gin.Context, key string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func queryOptionalFlag(c *gin.Context, key string) (*bool, bool) {
+	raw := c.Query(key)
+	if raw == "" {
+		return nil, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || (value != 0 && value != 1) {
+		return nil, false
+	}
+	flag := value == 1
+	return &flag, true
 }
 
 func pathID(c *gin.Context) (int64, bool) {
