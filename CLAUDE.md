@@ -18,6 +18,8 @@ project/
 2. **用 Explore agent 搜索**，而不是直接 Read 整个目录
 3. **一次只读一个子模块**（如 `src/components/UserTable.tsx`），不要批量读整个目录
 4. **需要架构参考时**，只读 `docs/` 或 `experience/` 下的摘要文件
+5. **需要pgsql环境时** , 使用 `edge-collector-api/configs/config.dev.yaml`里面的地址、用户名密码。
+6. **需要mqtt环境时** , 参考 `testdata/mqtt` 
 
 ## 工作模式
 
