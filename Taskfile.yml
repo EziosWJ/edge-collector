@@ -141,6 +141,15 @@ tasks:
     dir: react-admin
     cmds:
       - npm run test:znck-i-runtime-e2e
+      
+  simulator:dev:
+    desc: Start the Modbus simulator in development mode
+    dir: modbus-simulator
+    env:
+      UV_CACHE_DIR: /tmp/edge-collector-uv-cache
+    cmds:
+      - uv sync --locked
+      - uv run modbus-simulator
 
   simulator:test:
     desc: Validate the Modbus simulator fixture and run its protocol tests
