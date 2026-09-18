@@ -1,9 +1,12 @@
 package mqtt
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +15,33 @@ import (
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/config"
 	platformdatabase "github.com/EziosWJ/edge-collector/edge-collector-api/internal/platform/database"
 	"github.com/pressly/goose/v3"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
+
+func TestRepositoryEmptyOutboxDoesNotLogRecordNotFound(t *testing.T) {
+	repository, _, cleanup := newSQLiteRepository(t)
+	defer cleanup()
+
+	var logs bytes.Buffer
+	repository.db = repository.db.Session(&gorm.Session{
+		Logger: gormlogger.New(log.New(&logs, "", 0), gormlogger.Config{LogLevel: gormlogger.Error}),
+	})
+
+	next, err := repository.NextOutbox(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NextOutbox() error = %v", err)
+	}
+	if next != nil {
+		t.Fatalf("NextOutbox() = %#v, want nil for an empty outbox", next)
+	}
+	if _, err := repository.OutboxStats(context.Background()); err != nil {
+		t.Fatalf("OutboxStats() error = %v", err)
+	}
+	if strings.Contains(logs.String(), "record not found") {
+		t.Fatalf("empty outbox emitted record-not-found log: %s", logs.String())
+	}
+}
 
 func TestRepositoryEncryptsConfigAndKeepsSecretsOutOfView(t *testing.T) {
 	repository, database, cleanup := newSQLiteRepository(t)

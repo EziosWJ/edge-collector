@@ -3,12 +3,42 @@ package mqtt
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/EziosWJ/edge-collector/edge-collector-api/internal/audit"
 )
+
+func TestRuntimeTestConnectionUsesUniqueTemporaryClientID(t *testing.T) {
+	var clientIDs []string
+	factory := func(_ context.Context, config RuntimeConfig, _ TransportCallbacks) (Transport, error) {
+		clientIDs = append(clientIDs, config.ClientID)
+		return &testConnectionTransport{}, nil
+	}
+	runtime := NewRuntime(nil, factory)
+	config := RuntimeConfig{Config: DefaultConfig()}
+
+	if err := runtime.TestConnection(context.Background(), config); err != nil {
+		t.Fatalf("first TestConnection() error = %v", err)
+	}
+	if err := runtime.TestConnection(context.Background(), config); err != nil {
+		t.Fatalf("second TestConnection() error = %v", err)
+	}
+
+	if len(clientIDs) != 2 {
+		t.Fatalf("factory client IDs = %v, want two calls", clientIDs)
+	}
+	for _, clientID := range clientIDs {
+		if clientID == config.ClientID || !strings.HasPrefix(clientID, config.ClientID+"-test-") {
+			t.Fatalf("test client ID = %q, want a temporary ID based on %q", clientID, config.ClientID)
+		}
+	}
+	if clientIDs[0] == clientIDs[1] {
+		t.Fatalf("test client IDs = %v, want unique IDs", clientIDs)
+	}
+}
 
 func TestRuntimeRestoresSubscriptionAndHonorsDisabledConfig(t *testing.T) {
 	repository, _, cleanup := newSQLiteRepository(t)
@@ -142,6 +172,16 @@ type testTransport struct {
 	closed                 bool
 	closeCallsDisconnected bool
 }
+
+type testConnectionTransport struct{}
+
+func (testConnectionTransport) Publish(context.Context, Publication) error { return nil }
+
+func (testConnectionTransport) Subscribe(context.Context, string, byte) error { return nil }
+
+func (testConnectionTransport) Close() error { return nil }
+
+func (testConnectionTransport) WaitConnected(context.Context) error { return nil }
 
 func (t *testTransport) Publish(context.Context, Publication) error { return nil }
 

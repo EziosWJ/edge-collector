@@ -562,15 +562,15 @@ func (r *Repository) NextOutbox(ctx context.Context, now time.Time) (*OutboxMess
 	if now.IsZero() {
 		now = r.now().UTC()
 	}
-	var value OutboxMessage
-	err := r.db.WithContext(ctx).Where("expires_at IS NULL OR expires_at > ? OR message_type = ?", now.UTC(), OutboxMessageTypeCommandResult).Order("priority DESC, created_at, id").First(&value).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
+	var values []OutboxMessage
+	err := r.db.WithContext(ctx).Where("expires_at IS NULL OR expires_at > ? OR message_type = ?", now.UTC(), OutboxMessageTypeCommandResult).Order("priority DESC, created_at, id").Limit(1).Find(&values).Error
 	if err != nil {
 		return nil, err
 	}
-	return &value, nil
+	if len(values) == 0 {
+		return nil, nil
+	}
+	return &values[0], nil
 }
 
 func (r *Repository) MarkOutboxAttempt(ctx context.Context, id int64, at time.Time, errValue error) error {
@@ -598,9 +598,9 @@ func (r *Repository) OutboxStats(ctx context.Context) (OutboxStats, error) {
 	if err := r.db.WithContext(ctx).Model(&OutboxMessage{}).Select("COALESCE(SUM(payload_bytes), 0)").Scan(&stats.Bytes).Error; err != nil {
 		return stats, err
 	}
-	var oldestRow OutboxMessage
-	if err := r.db.WithContext(ctx).Select("created_at").Order("created_at, id").First(&oldestRow).Error; err == nil && !oldestRow.CreatedAt.IsZero() {
-		oldest := oldestRow.CreatedAt
+	var oldestRows []OutboxMessage
+	if err := r.db.WithContext(ctx).Select("created_at").Order("created_at, id").Limit(1).Find(&oldestRows).Error; err == nil && len(oldestRows) > 0 && !oldestRows[0].CreatedAt.IsZero() {
+		oldest := oldestRows[0].CreatedAt
 		stats.OldestAt = &oldest
 	}
 	var lastError string

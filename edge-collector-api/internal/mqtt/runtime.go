@@ -392,6 +392,9 @@ func (r *Runtime) TestConnection(ctx context.Context, config RuntimeConfig) erro
 	if config.Enabled == 0 {
 		config.Enabled = 1
 	}
+	// Brokers commonly allow only one active session per client ID. Keep the
+	// isolated test connector from disconnecting the formal runtime.
+	config.ClientID = temporaryClientID(config.ClientID)
 	transport, err := r.factory(ctx, config, TransportCallbacks{})
 	if err != nil {
 		return err
@@ -401,6 +404,10 @@ func (r *Runtime) TestConnection(ctx context.Context, config RuntimeConfig) erro
 		return waiter.WaitConnected(ctx)
 	}
 	return nil
+}
+
+func temporaryClientID(clientID string) string {
+	return clientID + "-test-" + NewMessageID(time.Now().UTC())
 }
 
 // redactMQTTErrorValue keeps errors.Is useful to callers while ensuring that
