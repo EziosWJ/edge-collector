@@ -201,6 +201,8 @@ func (h *Handler) outboxStats(c *gin.Context) {
 // @Param pageSize query int false "每页条数"
 // @Param status query string false "命令状态"
 // @Param deviceId query string false "设备外部 ID"
+// @Param commandId query string false "命令 ID（精确或前缀）"
+// @Param name query string false "命令名称（包含）"
 // @Success 200 {object} ApiEnvelope
 // @Failure 400 {object} ApiEnvelope
 // @Failure 401 {object} ApiEnvelope
@@ -218,6 +220,7 @@ func (h *Handler) pageCommands(c *gin.Context) {
 	}
 	value, err := h.service.PageCommands(c.Request.Context(), CommandJournalQuery{
 		Page: page, PageSize: pageSize, Status: c.Query("status"), DeviceID: c.Query("deviceId"),
+		CommandID: c.Query("commandId"), Name: c.Query("name"),
 	})
 	h.write(c, value, err)
 }

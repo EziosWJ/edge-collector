@@ -241,10 +241,12 @@ type CommandJournalView struct {
 }
 
 type CommandJournalQuery struct {
-	Page     int
-	PageSize int
-	Status   string
-	DeviceID string
+	Page      int
+	PageSize  int
+	Status    string
+	DeviceID  string
+	CommandID string
+	Name      string
 }
 
 type Page[T any] struct {

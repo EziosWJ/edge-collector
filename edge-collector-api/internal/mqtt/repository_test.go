@@ -3,6 +3,7 @@ package mqtt
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"path/filepath"
@@ -186,6 +187,75 @@ func TestRepositoryCleanupNeverDeletesIncompleteCommandResult(t *testing.T) {
 		// The accepted notice may expire; the incomplete journal is what must
 		// remain durable. A final row would be the protected case below.
 		t.Fatalf("expired accepted notice rows = %d, want 0", stats.Rows)
+	}
+}
+
+func TestRepositoryPageCommandsFiltersPaginatesAndProtectsJournalProjection(t *testing.T) {
+	repository, _, cleanup := newSQLiteRepository(t)
+	defer cleanup()
+	ctx := context.Background()
+	newest := time.Date(2026, 9, 18, 1, 0, 0, 0, time.UTC)
+	rows := []CommandJournal{
+		{CommandID: "cmd-001", DeviceID: "device-1", CommandName: "set_temperature", PayloadHash: "hash-001", CommandPayload: `{"credentials":"secret-payload"}`, ResultPayload: `{"result":"secret-result"}`, ReceivedAt: newest, IssuedAt: newest, ExpiresAt: newest.Add(time.Hour), Status: CommandStatusSucceeded},
+		{CommandID: "cmd-002", DeviceID: "device-2", CommandName: "set_pressure", PayloadHash: "hash-002", ReceivedAt: newest, IssuedAt: newest, ExpiresAt: newest.Add(time.Hour), Status: CommandStatusFailed},
+		{CommandID: "other-001", DeviceID: "device-1", CommandName: "reset", PayloadHash: "hash-003", ReceivedAt: newest.Add(-time.Minute), IssuedAt: newest, ExpiresAt: newest.Add(time.Hour), Status: CommandStatusSucceeded},
+	}
+	if err := repository.db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed command journal: %v", err)
+	}
+
+	page, err := repository.PageCommands(ctx, CommandJournalQuery{Page: 1, PageSize: 1})
+	if err != nil {
+		t.Fatalf("PageCommands() error = %v", err)
+	}
+	if page.Total != 3 || page.Page != 1 || page.PageSize != 1 || len(page.Records) != 1 || page.Records[0].CommandID != "cmd-001" {
+		t.Fatalf("first page = %#v", page)
+	}
+	page, err = repository.PageCommands(ctx, CommandJournalQuery{Page: 2, PageSize: 1})
+	if err != nil {
+		t.Fatalf("PageCommands() second page error = %v", err)
+	}
+	if len(page.Records) != 1 || page.Records[0].CommandID != "cmd-002" {
+		t.Fatalf("stable second page = %#v", page.Records)
+	}
+
+	page, err = repository.PageCommands(ctx, CommandJournalQuery{Page: 1, PageSize: 20, CommandID: "cmd-00", Name: "pressure", Status: CommandStatusFailed, DeviceID: "device-2"})
+	if err != nil {
+		t.Fatalf("filtered PageCommands() error = %v", err)
+	}
+	if page.Total != 1 || len(page.Records) != 1 || page.Records[0].CommandID != "cmd-002" {
+		t.Fatalf("filtered page = %#v", page)
+	}
+
+	page, err = repository.PageCommands(ctx, CommandJournalQuery{Page: 0, PageSize: 1000, CommandID: "cmd-"})
+	if err != nil {
+		t.Fatalf("bounded PageCommands() error = %v", err)
+	}
+	if page.Page != 1 || page.PageSize != 500 || page.Total != 2 || len(page.Records) != 2 {
+		t.Fatalf("bounded page = %#v", page)
+	}
+	serialized, err := json.Marshal(page)
+	if err != nil {
+		t.Fatalf("marshal journal page: %v", err)
+	}
+	for _, forbidden := range []string{"secret-payload", "secret-result", "hash-001", "payloadHash", "commandPayload", "resultPayload", "ciphertext", "credentials"} {
+		if strings.Contains(string(serialized), forbidden) {
+			t.Fatalf("journal response contains forbidden value %q: %s", forbidden, serialized)
+		}
+	}
+
+	detail, err := repository.FindCommand(ctx, "cmd-001")
+	if err != nil {
+		t.Fatalf("FindCommand() error = %v", err)
+	}
+	detailSerialized, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal journal detail: %v", err)
+	}
+	for _, forbidden := range []string{"secret-payload", "secret-result", "hash-001", "payloadHash", "commandPayload", "resultPayload", "ciphertext", "credentials"} {
+		if strings.Contains(string(detailSerialized), forbidden) {
+			t.Fatalf("journal detail contains forbidden value %q: %s", forbidden, detailSerialized)
+		}
 	}
 }
 

@@ -4741,6 +4741,18 @@ const docTemplate = `{
                         "description": "设备外部 ID",
                         "name": "deviceId",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "命令 ID（精确或前缀）",
+                        "name": "commandId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "命令名称（包含）",
+                        "name": "name",
+                        "in": "query"
                     }
                 ],
                 "responses": {

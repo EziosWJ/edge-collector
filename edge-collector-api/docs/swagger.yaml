@@ -3562,6 +3562,14 @@ paths:
         in: query
         name: deviceId
         type: string
+      - description: 命令 ID（精确或前缀）
+        in: query
+        name: commandId
+        type: string
+      - description: 命令名称（包含）
+        in: query
+        name: name
+        type: string
       responses:
         "200":
           description: OK

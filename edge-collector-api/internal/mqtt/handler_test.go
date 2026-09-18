@@ -20,6 +20,7 @@ type mqttHandlerServiceFake struct {
 	state        RuntimeStateView
 	stats        OutboxStatsView
 	commands     Page[CommandJournalView]
+	commandQuery CommandJournalQuery
 	command      *CommandJournalView
 	updated      ConfigInput
 	metadata     audit.Metadata
@@ -57,7 +58,8 @@ func (f *mqttHandlerServiceFake) OutboxStats(context.Context) (OutboxStatsView, 
 	return f.stats, f.statsErr
 }
 
-func (f *mqttHandlerServiceFake) PageCommands(context.Context, CommandJournalQuery) (Page[CommandJournalView], error) {
+func (f *mqttHandlerServiceFake) PageCommands(_ context.Context, query CommandJournalQuery) (Page[CommandJournalView], error) {
+	f.commandQuery = query
 	return f.commands, f.commandsErr
 }
 
@@ -159,14 +161,27 @@ func TestMQTTHandlerExposesStateStatsAndCommandQueries(t *testing.T) {
 		command:  &CommandJournalView{CommandID: "cmd-1", DeviceID: "device-1", CommandName: "close", Status: CommandStatusSucceeded, ReceivedAt: now},
 	}
 	router := newMQTTHandlerTestRouter(service)
-	for _, path := range []string{"/api/v1/mqtt/state", "/api/v1/mqtt/outbox/stats", "/api/v1/mqtt/commands?page=2&pageSize=5&status=SUCCEEDED&deviceId=device-1", "/api/v1/mqtt/commands/cmd-1"} {
+	for _, path := range []string{"/api/v1/mqtt/state", "/api/v1/mqtt/outbox/stats", "/api/v1/mqtt/commands?page=2&pageSize=5&status=SUCCEEDED&deviceId=device-1&commandId=cmd-&name=los", "/api/v1/mqtt/commands/cmd-1"} {
 		response := serveMQTTHandlerRequest(router, http.MethodGet, path, "", nil)
 		if response.Code != http.StatusOK {
 			t.Errorf("GET %s status = %d, body=%s", path, response.Code, response.Body.String())
 		}
 	}
+	if service.commandQuery != (CommandJournalQuery{Page: 2, PageSize: 5, Status: CommandStatusSucceeded, DeviceID: "device-1", CommandID: "cmd-", Name: "los"}) {
+		t.Fatalf("command query = %#v", service.commandQuery)
+	}
 	if !strings.Contains(serveMQTTHandlerRequest(router, http.MethodGet, "/api/v1/mqtt/state", "", nil).Body.String(), `"pendingLatestCount":2`) {
 		t.Fatal("state response did not include pending latest count")
+	}
+}
+
+func TestMQTTHandlerRejectsNonPositiveCommandPageParameters(t *testing.T) {
+	router := newMQTTHandlerTestRouter(&mqttHandlerServiceFake{})
+	for _, target := range []string{"/api/v1/mqtt/commands?page=0", "/api/v1/mqtt/commands?pageSize=0"} {
+		response := serveMQTTHandlerRequest(router, http.MethodGet, target, "", nil)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("GET %s status = %d, body=%s", target, response.Code, response.Body.String())
+		}
 	}
 }
 

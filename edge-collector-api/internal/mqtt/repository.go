@@ -658,13 +658,19 @@ func (r *Repository) PageCommands(ctx context.Context, query CommandJournalQuery
 	if query.DeviceID != "" {
 		db = db.Where("device_id=?", query.DeviceID)
 	}
+	if query.CommandID != "" {
+		db = db.Where("command_id LIKE ? ESCAPE '\\'", escapeLikePattern(query.CommandID)+"%")
+	}
+	if query.Name != "" {
+		db = db.Where("command_name LIKE ? ESCAPE '\\'", "%"+escapeLikePattern(query.Name)+"%")
+	}
 	var page Page[CommandJournalView]
 	if err := db.Count(&page.Total).Error; err != nil {
 		return page, err
 	}
 	page.Page, page.PageSize = query.Page, query.PageSize
 	var records []CommandJournal
-	if err := db.Order("received_at DESC, command_id").Offset((query.Page - 1) * query.PageSize).Limit(query.PageSize).Find(&records).Error; err != nil {
+	if err := db.Order("received_at DESC, command_id ASC").Offset((query.Page - 1) * query.PageSize).Limit(query.PageSize).Find(&records).Error; err != nil {
 		return page, err
 	}
 	page.Records = make([]CommandJournalView, 0, len(records))
@@ -672,6 +678,12 @@ func (r *Repository) PageCommands(ctx context.Context, query CommandJournalQuery
 		page.Records = append(page.Records, commandJournalView(record))
 	}
 	return page, nil
+}
+
+func escapeLikePattern(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `%`, `\%`)
+	return strings.ReplaceAll(value, `_`, `\_`)
 }
 
 func commandJournalView(value CommandJournal) CommandJournalView {
