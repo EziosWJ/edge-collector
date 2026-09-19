@@ -117,6 +117,8 @@ tasks:
     dir: react-admin
     cmds:
       - npm run test:mqtt-config
+      - npm run test:mqtt-monitor
+      - npm run test:mqtt-monitor-disconnect
       - npm run test:register-format
       - npm run test:realtime-null-state
       - npm run test:realtime-layout
