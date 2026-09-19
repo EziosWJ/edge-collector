@@ -2,15 +2,16 @@
 
 ## 页面与路由
 
-MQTT 管理由三个独立页面组成：
+MQTT 管理由四个独立页面组成：
 
 - `/mqtt/overview`：运行总览。
 - `/mqtt/config`：连接配置。
 - `/mqtt/commands`：Command Journal。
+- `/mqtt/monitor`：MQTT 消息监控。
 
-`/mqtt` 仅作为兼容入口，跳转到当前用户可访问的默认页面，优先进入运行总览。三个页面分别加载、分别处理 loading/error/empty 状态，不再渲染纵向堆叠的复合页面。
+`/mqtt` 仅作为兼容入口，跳转到当前用户可访问的默认页面，优先进入运行总览。四个页面分别加载、分别处理 loading/error/empty 状态，不再渲染纵向堆叠的复合页面。
 
-左侧导航将 MQTT 管理显示为目录，并按权限显示可访问的子页面。页面名称固定为“运行总览”“连接配置”和“Command Journal”。
+左侧导航将 MQTT 管理显示为目录，并按权限显示可访问的子页面。页面名称固定为“运行总览”“连接配置”“Command Journal”和“消息监控”。
 
 ## 权限
 
@@ -22,6 +23,7 @@ MQTT 管理由三个独立页面组成：
 - `mqtt:config:test`：测试连接。
 - `mqtt:command:list`：查看 Command Journal 列表。
 - `mqtt:command:detail`：查看 Journal 详情。
+- `mqtt:monitor:list`：只读查看 Edge Collector 发布的 MQTT 上报消息。
 
 拥有任一 MQTT 子权限时显示 MQTT 管理目录；没有对应权限的页面或操作不显示，直接访问仍必须受到页面级权限守卫保护。拥有 Journal 权限不要求同时拥有连接配置权限。
 
@@ -56,6 +58,16 @@ Secret 仅写入，不回显。读取配置只展示 `passwordConfigured` 和 `c
 
 没有 `mqtt:config:edit` 时可以查看配置但不能保存；没有 `mqtt:config:test` 时隐藏测试操作。
 
+## MQTT 消息监控
+
+消息监控是 Standard List Page 的实时监控变体，只读观察浏览器 MQTT Client 实际收到的上行消息，不代理后端 runtime，也不订阅或发布 `command`。页面使用 MQTT.js 经 WebSocket/WSS 连接 Broker，按当前 Prefix、Edge ID 和勾选类型生成五类受控订阅：Edge 状态、设备状态、Raw Snapshot、设备事件和 Command Result。
+
+页面采用连接栏、状态带、筛选栏、固定高度消息表格和详情抽屉结构。连接由用户显式发起；每个标签页使用独立 client ID 和临时 clean session。传输中断自动重连，明确认证/协议拒绝时停止重试；离开页面或主动断开后释放客户端。
+
+消息按最新接收时间置顶，保留 retained 和 duplicate 投递，不做业务去重。列表展示接收时间、Payload 时间、消息类型、Device ID、Topic、QoS、Retain、Duplicate、字节数和解析状态；Payload 时间与浏览器接收时间分开，并继续使用共享 Asia/Shanghai 格式化函数。未知 Schema、非法 JSON、Envelope 不完整和 Topic/Payload 标识不一致的消息保留并标记诊断状态。
+
+筛选只作用于当前内存缓冲，不改变 Broker 订阅。消息缓冲最多 500 条、10 MiB 总 Payload、单条 1 MiB；淘汰、暂停跳过和超限计数可见。暂停保持连接但丢弃新消息，不创建积压；用户阅读旧消息时不抢滚动位置，显示新消息数量提示。密码只驻留页面内存，非敏感连接参数可保存在当前标签页 sessionStorage。页面不提供任意 Topic、批量导出、控制操作或自定义 CA/客户端私钥输入。
+
 ## Command Journal
 
 Command Journal 是 MQTT 控制指令的只读持久化事实视图，负责查询命令生命周期，不提供任何控制操作。页面默认按 `receivedAt` 倒序，并以 Command ID 稳定打散；使用服务端分页，默认每页 20 条，提供 10、20、50、100 条选项，服务端继续限制最大页大小。
@@ -82,9 +94,10 @@ API 时间保持带时区的 RFC3339 UTC instant。页面所有时间统一经�
 ## 明确不包含
 
 - Command 重试、取消、重放、导出或手动创建。
-- SSE、WebSocket 或新的实时传输机制。
+- SSE、后端代理 WebSocket 管理通道或其他管理面实时传输机制。
 - 独立 Reliable Outbox 页面。
+- MQTT 消息监控的任意 Topic 浏览、command 订阅/发布、历史持久化和批量导出。
 - MQTT Topic/Payload、runtime 状态机、控制安全边界、可靠结果容量准入或 Secret 存储语义的改变。
 - acquisition、通信通道、设备、脚本或设备健康页面的改动。
 
-本页设计继续遵守 ADR-0017；MQTT runtime、可靠 Outbox、Command Journal、控制安全边界和 Secret 语义以该 ADR 为准。
+本页设计继续遵守 ADR-0017；浏览器直连 Broker 的只读监控边界以 ADR-0018 为准。MQTT runtime、可靠 Outbox、Command Journal、控制安全边界和 Secret 语义以 ADR-0017 为准。

@@ -45,6 +45,7 @@
 - **告警详情**：告警触发后，按照具体设备协议进一步查询得到并需要即时上报的信息。
 - **控制指令**：上级平台通过 MQTT 下发、要求 Edge Collector 对目标设备执行的操作。
 - **MQTT 上报**：Edge Collector 作为 MQTT Client 向上级 Broker 发送 raw、事件、设备状态或控制结果；ADR-0017 第一版不把 raw/event 命名为正式 telemetry/alarm。
+- **MQTT 消息监控**：管理后台通过独立的浏览器 MQTT Client，只读订阅并展示 Edge Collector 向 Broker 发布的 raw、事件、设备状态和控制结果，用于运维诊断与验证上报链路；它不是任意 Topic 的通用 MQTT 客户端，也不订阅或发布控制指令。
 - **MQTT latest-state**：不要求逐条离线补发、只关心最新当前值的 MQTT 数据路径。ADR-0017 中 raw snapshot 和 device current status 属于该类；raw 采用 per-device latest/coalesce，Broker 离线时不逐帧写 SQLite。
 - **可靠 Outbox**：用于 MQTT 离散可靠消息补发的有界持久队列。第一版用于 committed event 与 command result，QoS1 PUBACK 后删除；它不是 raw 历史数据库。
 - **Command Journal**：MQTT 控制命令的持久化幂等事实源，保存 `commandId`、payload hash、状态和最终结果；它与 Outbox 分工不同，前者防止重复执行，后者负责可靠发送。
