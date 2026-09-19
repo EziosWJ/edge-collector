@@ -273,6 +273,17 @@ export const mockPermissions: PermissionRecord[] = [
     description: "查看 Command Journal 的安全状态详情",
     updatedAt: "2026-09-18 10:00",
   },
+  {
+    id: 12,
+    name: "MQTT 消息监控查看",
+    code: "mqtt:monitor:list",
+    menuName: "MQTT 消息监控",
+    type: "page",
+    status: "enabled",
+    sort: 12,
+    description: "只读查看 Edge Collector MQTT 上报消息",
+    updatedAt: "2026-09-18 10:00",
+  },
 ];
 
 export const mockCurrentUserPermissionCodes: string[] = [
@@ -292,6 +303,7 @@ export const mockCurrentUserPermissionCodes: string[] = [
   "mqtt:overview:list",
   "mqtt:command:list",
   "mqtt:command:detail",
+  "mqtt:monitor:list",
 ] as const;
 
 export const mockRolePermissionDetails: Record<number, RolePermissionDetail> = {

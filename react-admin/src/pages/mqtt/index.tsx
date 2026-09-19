@@ -8,6 +8,8 @@ export function MqttManagementPage() {
       ? "/mqtt/config"
       : hasPermission("mqtt:command:list")
         ? "/mqtt/commands"
-        : "/mqtt/overview";
+        : hasPermission("mqtt:monitor:list")
+          ? "/mqtt/monitor"
+          : "/mqtt/overview";
   return <Navigate to={target} replace />;
 }

@@ -196,6 +196,7 @@ export function MqttPageNav() {
     { label: "运行总览", path: "/mqtt/overview", permission: "mqtt:overview:list" },
     { label: "连接配置", path: "/mqtt/config", permission: "mqtt:config:list" },
     { label: "Command Journal", path: "/mqtt/commands", permission: "mqtt:command:list" },
+    { label: "消息监控", path: "/mqtt/monitor", permission: "mqtt:monitor:list" },
   ];
   return (
     <nav className="mb-space-5 flex flex-wrap gap-1 border-b border-border" aria-label="MQTT 管理页面">

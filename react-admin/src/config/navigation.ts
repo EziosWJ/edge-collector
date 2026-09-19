@@ -88,6 +88,12 @@ export const defaultNavItems: NavItem[] = [
         icon: FileSearch,
         permission: "mqtt:command:list",
       },
+      {
+        label: "消息监控",
+        path: "/mqtt/monitor",
+        icon: Activity,
+        permission: "mqtt:monitor:list",
+      },
     ],
   },
 
@@ -275,6 +281,7 @@ export const staticRouteTitleMap: Record<string, string> = {
   "/mqtt/overview": "运行总览",
   "/mqtt/config": "连接配置",
   "/mqtt/commands": "Command Journal",
+  "/mqtt/monitor": "消息监控",
   "/system/user": "用户管理",
   "/system/dept": "部门管理",
   "/system/dict": "字典管理",
