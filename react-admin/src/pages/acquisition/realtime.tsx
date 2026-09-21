@@ -15,6 +15,11 @@ import { useRealtimeAcquisition } from "./use-realtime-acquisition";
 export { StateDetail } from "./realtime-components";
 
 export function AcquisitionRealtimePage() {
+  const queryString = typeof window === "undefined" ? "" : window.location.search;
+  const queryContext = useMemo(
+    () => getRealtimeQueryContext(queryString),
+    [queryString],
+  );
   const [paused, setPaused] = useState(false);
   const [selectedID, setSelectedID] = useState<number | null>(null);
   const [displayMode, setDisplayMode] = useState<"hex" | "dec" | "bin">("hex");
@@ -23,6 +28,7 @@ export function AcquisitionRealtimePage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [expandedChannels, setExpandedChannels] = useState<Set<number>>(new Set());
   const [expandedInitialized, setExpandedInitialized] = useState(false);
+  const [appliedQueryString, setAppliedQueryString] = useState<string | null>(null);
   const {
     states,
     channelStates,
@@ -38,10 +44,10 @@ export function AcquisitionRealtimePage() {
   );
 
   useEffect(() => {
-    if (expandedInitialized || channelGroups.length === 0 || states.length === 0) return;
+    if (expandedInitialized || channelGroups.length === 0) return;
     setExpandedChannels(new Set(channelGroups.map((group) => group.channelId)));
     setExpandedInitialized(true);
-  }, [channelGroups, expandedInitialized, states.length]);
+  }, [channelGroups, expandedInitialized]);
 
   const visibleGroups = useMemo(() => {
     const normalizedQuery = search.trim().toLocaleLowerCase("zh-CN");
@@ -85,6 +91,53 @@ export function AcquisitionRealtimePage() {
     () => visibleGroups.flatMap((group) => group.states),
     [visibleGroups],
   );
+
+  useEffect(() => {
+    if (
+      appliedQueryString === queryString ||
+      channelGroups.length === 0 ||
+      (queryContext.deviceId !== null && states.length === 0)
+    ) {
+      return;
+    }
+
+    const requestedDevice =
+      queryContext.deviceId === null
+        ? null
+        : states.find((state) => state.deviceId === queryContext.deviceId) ?? null;
+    const requestedChannel =
+      queryContext.channelId === null
+        ? null
+        : channelGroups.find((group) => group.channelId === queryContext.channelId) ?? null;
+    const compatibleDevice =
+      requestedDevice &&
+      (queryContext.channelId === null || requestedDevice.channelId === queryContext.channelId)
+        ? requestedDevice
+        : null;
+
+    if (compatibleDevice && visibleStates.some((state) => state.deviceId === compatibleDevice.deviceId)) {
+      setSelectedID(compatibleDevice.deviceId);
+    }
+
+    const channelToExpand = requestedChannel?.channelId ?? compatibleDevice?.channelId;
+    if (channelToExpand !== undefined) {
+      setExpandedChannels((current) => {
+        const next = new Set(current);
+        next.add(channelToExpand);
+        return next;
+      });
+    }
+
+    setAppliedQueryString(queryString);
+  }, [
+    appliedQueryString,
+    channelGroups,
+    queryContext,
+    queryString,
+    states,
+    visibleStates,
+  ]);
+
   const selected = useMemo(
     () => states.find((state) => state.deviceId === selectedID) ?? null,
     [selectedID, states],
@@ -186,4 +239,18 @@ function matchesStatusFilter(state: AcquisitionCurrentState, filter: StatusFilte
   if (filter === "ALL") return true;
   if (filter === "UNCONFIGURED") return state.registerBlocks.length === 0;
   return state.status === filter;
+}
+
+function getRealtimeQueryContext(queryString: string) {
+  const params = new URLSearchParams(queryString);
+  return {
+    channelId: parsePositiveInteger(params.get("channelId")),
+    deviceId: parsePositiveInteger(params.get("deviceId")),
+  };
+}
+
+function parsePositiveInteger(value: string | null) {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
