@@ -110,11 +110,10 @@ APP_ENV=prod APP_DATABASE__URL=/var/lib/edge-collector-api/data/edge-collector-r
 ```zsh
 cd edge-collector-api
 cp .env.example .env
-# 编辑 .env：至少替换 POSTGRES_PASSWORD 和 APP_JWT__SECRET
-docker compose -f docker-compose.dev.yml up --build
+# 编辑 .env：至少替换 POSTGRES_PASSWORD 和 APP_JWT__SECRET；\n# APP_MQTT__MASTER_SECRET 已提供固定 DEV ONLY 值，本地开发可直接保留。\ndocker compose -f docker-compose.dev.yml up --build
 ```
 
-Compose 按以下顺序启动：`postgres`（健康检查通过）→ `migrate`（成功后退出）→ `api`。Compose 会把 `.env` 中的 PostgreSQL 与 JWT 值以 `APP_*` 环境变量注入容器内应用，因此该方式无需 `configs/config.dev.yaml` 也能完整运行。
+Compose 按以下顺序启动：`postgres`（健康检查通过）→ `migrate`（成功后退出）→ `api`。Compose 会把 `.env` 中的 PostgreSQL、JWT 和 MQTT 主密钥以 `APP_*` 环境变量注入容器内应用，并显式设置 `APP_HTTP__ADDRESS=:8080`，因此容器内 API 与 `8080` 端口映射保持一致。该方式无需 `configs/config.dev.yaml` 也能完整运行。\n\n`.env.example` 中的 `APP_MQTT__MASTER_SECRET` 是公开的 DEV ONLY 固定值，只用于本机 Compose 开发。使用同一个 PostgreSQL volume 时必须保持该值不变，否则之前保存的 MQTT 密码或客户端私钥将无法解密；生产环境不得复用该值。`API_PORT` 只控制宿主机映射端口，容器内部始终监听 `8080`。
 
 启动后可访问：
 
