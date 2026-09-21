@@ -125,6 +125,7 @@ tasks:
       - npm run test:acquisition-config
       - npm run test:layout
       - npm run test:route-loading
+      - npm run test:dashboard
 
   e2e:acquisition:
     desc: Run the SQLite, Go API, simulator and browser acquisition E2E

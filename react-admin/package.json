@@ -20,7 +20,8 @@
     "test:acquisition-script-e2e": "node tests/acquisition-script-e2e.mjs",
     "test:znck-i-runtime-e2e": "node tests/znck-i-runtime-e2e.mjs",
     "test:layout": "node tests/operation-column-layout.mjs",
-    "test:route-loading": "node tests/route-loading.mjs"
+    "test:route-loading": "node tests/route-loading.mjs",
+    "test:dashboard": "node tests/dashboard.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
