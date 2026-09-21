@@ -21,7 +21,7 @@ WORKDIR /app
 COPY configs ./configs
 # Named-volume mount point: must exist and be writable by the app user,
 # otherwise file uploads fail with permission denied after the first boot.
-RUN mkdir -p /var/lib/edge-collector-api/uploads && chown -R app:app /var/lib/edge-collector
+RUN mkdir -p /var/lib/edge-collector-api/uploads && chown -R app:app /var/lib/edge-collector-api
 USER app
 
 FROM runtime AS api
