@@ -83,7 +83,13 @@ task dev:sqlite
 task dev
 ```
 
-`task api`、`task api:sqlite`、`task dev` 和 `task dev:sqlite` 会使用仓库内固定的 **DEV ONLY** 主密钥兜底，因此本地数据库中的 MQTT 密码在重启后仍可解密。该默认值公开在 `Taskfile.yml` 中，只适用于本机开发数据，不得用于生产环境。
+`task api`、`task api:sqlite`、`task dev` 和 `task dev:sqlite` 会使用仓库内固定的 **DEV ONLY** 主密钥兜底，因此本地数据库中的 MQTT 密码在重启后仍可解密：
+
+```text
+edge-collector-local-dev-master-secret-v1-do-not-use-in-production
+```
+
+这个值公开在 `Taskfile.yml` 中，只适用于本机开发数据，不得用于生产环境。
 
 需要使用已有数据库或自定义主密钥时，可以显式覆盖：
 
@@ -91,7 +97,14 @@ task dev
 APP_MQTT__MASTER_SECRET='your-existing-stable-master-secret' task dev:sqlite
 ```
 
-直接执行 `go run ./cmd/api`、使用 IDE 启动 API，或在生产环境部署时，不会依赖 Taskfile 的本地兜底值，必须显式提供主密钥。后端支持：
+直接执行 `go run ./cmd/api` 或使用 IDE 启动 API 时，应用本身允许在没有主密钥的情况下启动，但保存或解密带密码的 MQTT 配置会失败。若要与 Taskfile 创建的本地数据库保持兼容，可显式使用同一个 DEV ONLY 主密钥：
+
+```sh
+cd edge-collector-api
+APP_MQTT__MASTER_SECRET='edge-collector-local-dev-master-secret-v1-do-not-use-in-production' go run ./cmd/api
+```
+
+生产环境需要显式提供独立主密钥。后端同时支持直接注入和只读文件：
 
 ```sh
 APP_MQTT__MASTER_SECRET='a-stable-deployment-secret' go run ./cmd/api
@@ -110,7 +123,7 @@ Username: edge_collector
 Password: 以本地 edge-dev-infra / Mosquitto 开发环境配置为准
 ```
 
-如果页面保存 MQTT 配置时出现 `MQTT master secret is not configured`，说明 API 不是通过上述 Task 开发入口启动，且当前进程也没有显式注入主密钥。
+如果页面保存 MQTT 配置时出现 `MQTT master secret is not configured`，说明当前 API 进程没有可用的 MQTT 主密钥；优先通过上述 Task 开发入口启动，或者显式注入与当前数据库一致的主密钥。
 
 ## ARM64 / RK3568
 
