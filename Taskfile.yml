@@ -6,6 +6,12 @@ env:
   APP_ENV: dev
   GOCACHE: '{{.ROOT_DIR}}/.task/go-build'
 
+vars:
+  # Stable local-development fallback so MQTT passwords saved from the admin UI
+  # remain decryptable across task-based restarts. Never use this value in
+  # production. A caller-provided APP_MQTT__MASTER_SECRET always wins.
+  DEV_MQTT_MASTER_SECRET: '{{ env "APP_MQTT__MASTER_SECRET" | default "edge-collector-local-dev-master-secret-v1-do-not-use-in-production" }}'
+
 tasks:
   default:
     desc: Show available tasks
@@ -34,16 +40,19 @@ tasks:
       - go run ./cmd/backup {{.CLI_ARGS}}
 
   api:
-    desc: Start the Go API
+    desc: Start the Go API with the local-development MQTT master secret fallback
     dir: edge-collector-api
+    env:
+      APP_MQTT__MASTER_SECRET: '{{.DEV_MQTT_MASTER_SECRET}}'
     cmds:
       - go run ./cmd/api
 
   api:sqlite:
-    desc: Start the Go API with the SQLite profile
+    desc: Start the Go API with the SQLite profile and local-development MQTT master secret fallback
     dir: edge-collector-api
     env:
       APP_CONFIG_PROFILE: sqlite
+      APP_MQTT__MASTER_SECRET: '{{.DEV_MQTT_MASTER_SECRET}}'
     cmds:
       - go run ./cmd/api
 
