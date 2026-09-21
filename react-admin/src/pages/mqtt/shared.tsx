@@ -4,7 +4,6 @@ import {
   Clock3,
   Inbox,
   KeyRound,
-  Link2,
   RadioTower,
   RefreshCw,
   Server,
@@ -12,10 +11,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import {
-  Link,
-  NavLink,
-} from "react-router-dom";
 import { z } from "zod";
 import type { UseFormReturn } from "react-hook-form";
 import { PermissionGuard } from "@/components/auth/permission-guard";
@@ -30,7 +25,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { hasPermission } from "@/lib/permission";
 import { formatDateTime } from "@/lib/datetime";
 import { formatMqttBytes, getMqttErrorMessage } from "@/lib/mqtt";
 import type { MqttConfigFormValues } from "@/lib/mqtt";
@@ -191,33 +185,10 @@ export function formatOptionalTime(value?: string | null) {
   return value ? formatDateTime(value) : "-";
 }
 
-export function MqttPageNav() {
-  const items = [
-    { label: "运行总览", path: "/mqtt/overview", permission: "mqtt:overview:list" },
-    { label: "连接配置", path: "/mqtt/config", permission: "mqtt:config:list" },
-    { label: "Command Journal", path: "/mqtt/commands", permission: "mqtt:command:list" },
-    { label: "消息监控", path: "/mqtt/monitor", permission: "mqtt:monitor:list" },
-  ];
-  return (
-    <nav className="mb-space-5 flex flex-wrap gap-1 border-b border-border" aria-label="MQTT 管理页面">
-      {items.map((item) => hasPermission(item.permission) && (
-        <NavLink
-          key={item.path}
-          to={item.path}
-          className={({ isActive }) => `border-b-2 px-space-3 py-space-2 text-sm transition-colors ${isActive ? "border-primary font-medium text-primary" : "border-transparent text-text-secondary hover:border-border hover:text-text-primary"}`}
-        >
-          {item.label}
-        </NavLink>
-      ))}
-    </nav>
-  );
-}
-
 export function MqttPageLayout({ title, description, actions, children }: { title: string; description: string; actions?: ReactNode; children: ReactNode }) {
   return (
     <>
       <PageHeader title={title} description={description} actions={actions} />
-      <MqttPageNav />
       {children}
     </>
   );
@@ -264,7 +235,7 @@ export function RuntimeOverview({ runtime, runtimeStatus, runtimeLoading, runtim
     <ContentCard
       title="运行总览"
       description="MQTT runtime 与 acquisition 状态独立；Broker 断线不应阻塞 Modbus 采集。"
-      extra={<div className="flex flex-wrap items-center justify-end gap-space-2"><Link to="/mqtt/config#broker" className="inline-flex items-center gap-1 text-sm text-primary hover:underline"><Link2 className="h-4 w-4" aria-hidden />连接配置</Link><Link to="/mqtt/commands" className="inline-flex items-center gap-1 text-sm text-primary hover:underline"><Link2 className="h-4 w-4" aria-hidden />Command Journal</Link><Button size="sm" variant="secondary" onClick={onRefresh} disabled={runtimeLoading && outboxLoading}><RefreshCw className="h-4 w-4" aria-hidden />刷新</Button></div>}
+      extra={<Button size="sm" variant="secondary" onClick={onRefresh} disabled={runtimeLoading && outboxLoading}><RefreshCw className="h-4 w-4" aria-hidden />刷新</Button>}
     >
       {hasStaleData && <div className="mb-space-4 flex flex-wrap items-center gap-space-2 rounded-control border border-warning-border bg-warning-background px-space-3 py-space-2 text-body-secondary text-warning" role="status"><AlertTriangle className="h-4 w-4" aria-hidden />数据可能已过期；最近成功刷新：{formatDateTime(new Date(lastSuccessfulRefreshAt as number).toISOString())}</div>}
       {runtimeError && !runtime ? <ErrorPanel title="运行状态加载失败" description={runtimeError} onRetry={onRefresh} /> : runtimeLoading && !runtime ? <RuntimeLoading /> : (

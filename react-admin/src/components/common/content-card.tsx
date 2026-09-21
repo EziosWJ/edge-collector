@@ -7,6 +7,7 @@ type ContentCardProps = PropsWithChildren<{
   extra?: ReactNode;
   className?: string;
   bodyClassName?: string;
+  "data-testid"?: string;
 }>;
 
 export function ContentCard({
@@ -15,10 +16,12 @@ export function ContentCard({
   extra,
   className,
   bodyClassName,
+  "data-testid": dataTestId,
   children,
 }: ContentCardProps) {
   return (
     <section
+      data-testid={dataTestId}
       className={cn(
         "rounded-admin border border-border bg-surface shadow-admin",
         className,
