@@ -46,7 +46,14 @@ project/
 - `task check`：执行后端检查、前端 lint/build 和浏览器回归测试。
 - `task db:check`：执行后端检查以及 PostgreSQL、SQLite 两套数据库集成契约。
 
-日常开发优先使用 `task dev`（SQLite 场景使用 `task dev:sqlite`）。Agent 验证时，后端改动执行 `task backend:check`，前端改动执行 `task frontend:lint`、`task frontend:build` 或 `task frontend:browser-test`，跨后端和前端改动执行 `task check`，涉及数据库兼容性时执行 `task db:check`。专项 E2E、模拟器和 MQTT 验收只在改动范围涉及对应链路时运行。长时间运行的任务必须配合健康检查或明确的超时与清理；API 使用 `/health` 检查存活、`/ready` 检查数据库就绪。
+日常开发优先使用 `task dev`（SQLite 场景使用 `task dev:sqlite`）。Agent 验证按改动边界选择最小反馈闭环：
+
+- 页面局部文案、样式或交互优先通过热更新手动确认；已有对应浏览器脚本时只运行该脚本，例如 `npm --prefix react-admin run test:dashboard`。
+- 前端公共组件、共享 Hook、路由、类型或构建配置改动运行 `task frontend:lint`；涉及类型或构建时再运行 `task frontend:build`，并运行受影响的浏览器脚本。
+- 后端单模块改动运行受影响 Go package 的测试；涉及数据库契约时运行对应的 `task db:integration:*`。
+- 跨前后端改动、重大功能或提交/合并前运行 `task check`；涉及 PostgreSQL/SQLite 兼容性时运行 `task db:check`。
+
+专项 E2E、模拟器和 MQTT 验收只在改动范围涉及对应链路时运行。长时间运行的任务必须配合健康检查或明确的超时与清理；API 使用 `/health` 检查存活、`/ready` 检查数据库就绪。
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
