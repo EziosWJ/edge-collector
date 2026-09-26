@@ -144,8 +144,10 @@ func (i *CommandIntake) Handle(ctx context.Context, topic string, payload []byte
 }
 
 func (i *CommandIntake) admitAndEnqueue(ctx context.Context, command CommandInput, hash string, device acquisition.Device) error {
-	now := i.clockNow()
-	acceptedPayload, err := i.buildResult(command, CommandStatusAccepted, now, nil, nil, nil)
+	// The journal persists timestamps at PostgreSQL microsecond precision.
+	// Freeze the same instant in ACCEPTED before it can be recovered as FINAL.
+	now := i.clockNow().Truncate(time.Microsecond)
+	acceptedPayload, err := i.buildResult(command, CommandStatusAccepted, now, now, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -189,22 +191,22 @@ func (i *CommandIntake) admitAndEnqueue(ctx context.Context, command CommandInpu
 		},
 	})
 	if err != nil {
-		return i.finalizeFailure(ctx, command, acquisition.CommandExecutionResult{}, nil, i.platformWireError(err))
+		return i.finalizeFailure(ctx, command, now, acquisition.CommandExecutionResult{}, nil, i.platformWireError(err))
 	}
 	go func() {
 		result, waitErr := future.Wait(context.Background())
 		startedMu.Lock()
 		started := cloneTimePointer(startedAt)
 		startedMu.Unlock()
-		_ = i.finalizeExecution(context.Background(), command, result, waitErr, started, nil)
+		_ = i.finalizeExecution(context.Background(), command, now, result, waitErr, started, nil)
 	}()
 	return nil
 }
 
 func (i *CommandIntake) reject(ctx context.Context, command CommandInput, hash, status string, wireError *WireError) error {
-	now := i.clockNow()
+	now := i.clockNow().Truncate(time.Microsecond)
 	completed := now
-	payload, err := i.buildResult(command, status, now, nil, &completed, nil, wireError)
+	payload, err := i.buildResult(command, status, now, now, nil, &completed, nil, wireError)
 	if err != nil {
 		return err
 	}
@@ -228,11 +230,11 @@ func (i *CommandIntake) handleDuplicate(ctx context.Context, command CommandInpu
 	return i.repository.RequeueStoredFinal(ctx, command.CommandID, i.resultTopic(command.DeviceID))
 }
 
-func (i *CommandIntake) finalizeFailure(ctx context.Context, command CommandInput, result acquisition.CommandExecutionResult, started *time.Time, wireError *WireError) error {
-	return i.finalizeExecution(ctx, command, result, errors.New(wireError.Type), started, wireError)
+func (i *CommandIntake) finalizeFailure(ctx context.Context, command CommandInput, receivedAt time.Time, result acquisition.CommandExecutionResult, started *time.Time, wireError *WireError) error {
+	return i.finalizeExecution(ctx, command, receivedAt, result, errors.New(wireError.Type), started, wireError)
 }
 
-func (i *CommandIntake) finalizeExecution(ctx context.Context, command CommandInput, execution acquisition.CommandExecutionResult, executionErr error, startedAt *time.Time, forcedWireError *WireError) error {
+func (i *CommandIntake) finalizeExecution(ctx context.Context, command CommandInput, receivedAt time.Time, execution acquisition.CommandExecutionResult, executionErr error, startedAt *time.Time, forcedWireError *WireError) error {
 	now := i.clockNow()
 	status := CommandStatusSucceeded
 	wireError := forcedWireError
@@ -249,12 +251,12 @@ func (i *CommandIntake) finalizeExecution(ctx context.Context, command CommandIn
 		}
 	}
 	completed := now
-	payload, err := i.buildResult(command, status, now, startedAt, &completed, resultValue, wireError)
+	payload, err := i.buildResult(command, status, receivedAt, now, startedAt, &completed, resultValue, wireError)
 	if err != nil || int64(len(payload)) > DefaultResultReservationBytes {
 		status = CommandStatusFailed
 		wireError = &WireError{Type: string(script.ErrorClassScriptOutput), Message: "command result is too large"}
 		resultValue = nil
-		payload, err = i.buildResult(command, status, now, startedAt, &completed, resultValue, wireError)
+		payload, err = i.buildResult(command, status, receivedAt, now, startedAt, &completed, resultValue, wireError)
 	}
 	if err != nil {
 		return err
@@ -359,7 +361,7 @@ func (i *CommandIntake) admitRecovered(ctx context.Context, journal CommandJourn
 		startedMu.Lock()
 		started := cloneTimePointer(startedAt)
 		startedMu.Unlock()
-		_ = i.finalizeExecution(context.Background(), command, result, waitErr, started, nil)
+		_ = i.finalizeExecution(context.Background(), command, journal.ReceivedAt, result, waitErr, started, nil)
 	}()
 	return nil
 }
@@ -368,7 +370,7 @@ func (i *CommandIntake) finalizeRecovered(ctx context.Context, journal CommandJo
 	command := CommandInput{Schema: SchemaDeviceCommand, CommandID: journal.CommandID, DeviceID: journal.DeviceID, Name: journal.CommandName, IssuedAt: journal.IssuedAt, ExpiresAt: journal.ExpiresAt}
 	now := i.clockNow()
 	completed := now
-	payload, err := i.buildResult(command, status, now, journal.StartedAt, &completed, nil, wireError)
+	payload, err := i.buildResult(command, status, journal.ReceivedAt, now, journal.StartedAt, &completed, nil, wireError)
 	if err != nil {
 		return err
 	}
@@ -383,7 +385,7 @@ func (i *CommandIntake) finalizeRecovered(ctx context.Context, journal CommandJo
 	return i.repository.FinalizeCommand(ctx, journal, final)
 }
 
-func (i *CommandIntake) buildResult(command CommandInput, status string, at time.Time, startedAt, completedAt *time.Time, values ...any) ([]byte, error) {
+func (i *CommandIntake) buildResult(command CommandInput, status string, receivedAt, at time.Time, startedAt, completedAt *time.Time, values ...any) ([]byte, error) {
 	var result any
 	var wireError *WireError
 	if len(values) > 0 {
@@ -393,7 +395,7 @@ func (i *CommandIntake) buildResult(command CommandInput, status string, at time
 		wireError, _ = values[1].(*WireError)
 	}
 	builder, _ := i.settings()
-	return BuildCommandResult(builder.EdgeID(), command.DeviceID, NewMessageID(at), command, status, at, startedAt, completedAt, result, wireError, at)
+	return BuildCommandResult(builder.EdgeID(), command.DeviceID, NewMessageID(at), command, status, receivedAt, startedAt, completedAt, result, wireError, at)
 }
 
 func (i *CommandIntake) resultTopic(deviceID string) string {

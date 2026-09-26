@@ -24,7 +24,7 @@ func TestCommandIntakeAdmitsOnceAndFinalizesWithoutDuplicateExecution(t *testing
 	resolver := &intakeResolverFake{device: device}
 	runtime := &intakeRuntimeFake{version: acquisition.ScriptVersion{ID: 8, ScriptID: 7, VersionNo: 2}}
 	intake := NewCommandIntake(repository, resolver, runtime, builder)
-	at := time.Date(2026, 9, 17, 1, 0, 0, 0, time.UTC)
+	at := time.Date(2026, 9, 17, 1, 0, 0, 123456789, time.UTC)
 	intake.SetClock(func() time.Time { return at })
 	payload := commandPayloadForTest(t, "command-41", "device-41", "set_value", map[string]any{"value": 7}, at.Add(-time.Minute), at.Add(time.Hour))
 	topic := "edge/edge-01/device/device-41/command"
@@ -34,6 +34,11 @@ func TestCommandIntakeAdmitsOnceAndFinalizesWithoutDuplicateExecution(t *testing
 	if len(runtime.requests) != 1 {
 		t.Fatalf("enqueue requests = %d, want one", len(runtime.requests))
 	}
+	var acceptedRow OutboxMessage
+	if err := repository.db.Where("command_id=? AND message_type=?", "command-41", OutboxMessageTypeCommandAccepted).Take(&acceptedRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertCommandResultTimes(t, acceptedRow.Payload, at.Truncate(time.Microsecond), at.Truncate(time.Microsecond))
 	if err := intake.Handle(context.Background(), topic, payload); err != nil {
 		t.Fatalf("duplicate Handle() error = %v", err)
 	}
@@ -49,6 +54,8 @@ func TestCommandIntakeAdmitsOnceAndFinalizesWithoutDuplicateExecution(t *testing
 	if err := request.OnStarted(); err != nil {
 		t.Fatalf("OnStarted() error = %v", err)
 	}
+	receivedAt := at.Truncate(time.Microsecond)
+	at = at.Add(2 * time.Second)
 	runtime.complete(acquisition.CommandExecutionResult{Version: scriptVersionForTest(runtime.version), Result: script.Result{Output: map[string]any{"accepted": true}}})
 	waitForCommandStatus(t, repository, "command-41", CommandStatusSucceeded)
 	journal, err := repository.FindCommand(context.Background(), "command-41")
@@ -62,6 +69,7 @@ func TestCommandIntakeAdmitsOnceAndFinalizesWithoutDuplicateExecution(t *testing
 	if journalRecord.ResultPayload == "" || journal.StartedAt == nil || journal.CompletedAt == nil {
 		t.Fatalf("final journal = %#v", journalRecord)
 	}
+	assertCommandResultTimes(t, journalRecord.ResultPayload, receivedAt, at)
 
 	var rows []OutboxMessage
 	if err := repository.db.Where("command_id=?", "command-41").Find(&rows).Error; err != nil {
@@ -229,7 +237,7 @@ func TestCommandIntakeRecoversAcceptedCommandFromStoredPayload(t *testing.T) {
 	runtime := &intakeRuntimeFake{version: acquisition.ScriptVersion{ID: 9, ScriptID: 7, VersionNo: 3}}
 	resolver := &intakeResolverFake{device: device}
 	intake := NewCommandIntake(repository, resolver, runtime, builder)
-	at := time.Date(2026, 9, 17, 4, 0, 0, 0, time.UTC)
+	at := time.Date(2026, 9, 17, 4, 0, 0, 123456789, time.UTC)
 	intake.SetClock(func() time.Time { return at })
 	payload := commandPayloadForTest(t, "command-recover", "device-44", "set_value", map[string]any{"value": 8}, at.Add(-time.Minute), at.Add(time.Hour))
 	command, err := DecodeCommand(payload, DefaultMaxCommandBytes, at)
@@ -241,8 +249,9 @@ func TestCommandIntakeRecoversAcceptedCommandFromStoredPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	commandID := command.CommandID
-	now := at
-	acceptedPayload := `{"schema":"device-command-result/v1","messageId":"accepted-recover","edgeId":"edge-01","deviceId":"device-44","timestamp":"2026-09-17T04:00:00Z","data":{"commandId":"command-recover","name":"set_value","status":"ACCEPTED","receivedAt":"2026-09-17T04:00:00Z","startedAt":null,"completedAt":null,"result":null,"error":null}}`
+	now := at.Truncate(time.Microsecond)
+	acceptedPayload := `{"schema":"device-command-result/v1","messageId":"accepted-recover","edgeId":"edge-01","deviceId":"device-44","timestamp":"2026-09-17T04:00:00.123456Z","data":{"commandId":"command-recover","name":"set_value","status":"ACCEPTED","receivedAt":"2026-09-17T04:00:00.123456Z","startedAt":null,"completedAt":null,"result":null,"error":null}}`
+	assertCommandResultTimes(t, acceptedPayload, now, now)
 	_, err = repository.AdmitCommand(context.Background(), CommandJournal{CommandID: commandID, DeviceID: command.DeviceID, CommandName: command.Name, PayloadHash: hash, CommandPayload: string(payload), ReceivedAt: now, IssuedAt: command.IssuedAt, ExpiresAt: command.ExpiresAt, Status: CommandStatusAccepted}, OutboxMessage{MessageID: "accepted-recover", MessageType: OutboxMessageTypeCommandAccepted, CommandID: &commandID, Topic: "edge/edge-01/device/device-44/command-result", QoS: 1, Payload: acceptedPayload, PayloadBytes: int64(len(acceptedPayload)), Priority: OutboxPriorityCommandNotice}, FinalReservation{CommandID: commandID, ReservedRows: 1, ReservedBytes: DefaultResultReservationBytes, AcceptedBytes: int64(len(acceptedPayload)), FinalBytes: DefaultResultReservationBytes})
 	if err != nil {
 		t.Fatal(err)
@@ -256,8 +265,28 @@ func TestCommandIntakeRecoversAcceptedCommandFromStoredPayload(t *testing.T) {
 	if err := runtime.requests[0].OnStarted(); err != nil {
 		t.Fatal(err)
 	}
+	at = at.Add(2 * time.Second)
 	runtime.complete(acquisition.CommandExecutionResult{Version: scriptVersionForTest(runtime.version), Result: script.Result{Output: map[string]any{"recovered": true}}})
 	waitForCommandStatus(t, repository, commandID, CommandStatusSucceeded)
+	var journal CommandJournal
+	if err := repository.db.Where("command_id=?", commandID).Take(&journal).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertCommandResultTimes(t, journal.ResultPayload, now, at)
+}
+
+func assertCommandResultTimes(t *testing.T, payload string, receivedAt, generatedAt time.Time) {
+	t.Helper()
+	var envelope struct {
+		Timestamp string            `json:"timestamp"`
+		Data      CommandResultData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.ReceivedAt != receivedAt.Format(time.RFC3339Nano) || envelope.Timestamp != generatedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("result times: receivedAt=%s timestamp=%s; want %s and %s", envelope.Data.ReceivedAt, envelope.Timestamp, receivedAt.Format(time.RFC3339Nano), generatedAt.Format(time.RFC3339Nano))
+	}
 }
 
 type intakeResolverFake struct {
