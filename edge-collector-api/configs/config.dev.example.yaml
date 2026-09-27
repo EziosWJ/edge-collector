@@ -21,6 +21,10 @@ database:
 jwt:
   secret: replace-with-a-random-local-development-jwt-secret
 
+mqtt:
+  # 保持此值稳定，否则之前保存的 MQTT 密码和客户端私钥将无法解密。
+  master_secret: replace-with-a-stable-local-development-mqtt-master-secret
+
 auth:
   login_guard:
     # Set either max_attempts to 0 to disable that protection dimension.

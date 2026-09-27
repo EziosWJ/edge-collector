@@ -33,6 +33,11 @@ type Config struct {
 	Auth        AuthConfig        `koanf:"auth"`
 	Log         LogConfig         `koanf:"log"`
 	Acquisition AcquisitionConfig `koanf:"acquisition"`
+	MQTT        MQTTConfig        `koanf:"mqtt"`
+}
+
+type MQTTConfig struct {
+	MasterSecret string `koanf:"master_secret"`
 }
 
 type ServiceConfig struct {

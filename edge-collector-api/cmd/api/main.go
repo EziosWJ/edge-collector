@@ -166,7 +166,7 @@ func main() {
 	acquisitionService.SetRuntimeRefresher(acquisitionRuntime.Refresh)
 	acquisitionService.SetScriptRuntimeStateReader(acquisitionRuntime)
 
-	mqttSecretBox, secretErr := mqtt.NewEnvironmentSecretBox()
+	mqttSecretBox, secretErr := mqtt.NewConfiguredSecretBox(cfg.MQTT.MasterSecret)
 	if secretErr != nil && !errors.Is(secretErr, mqtt.ErrMasterSecretRequired) {
 		slog.Warn("MQTT master secret unavailable; encrypted credentials cannot be used", "error_type", fmt.Sprintf("%T", secretErr))
 	}

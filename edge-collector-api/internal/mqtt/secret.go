@@ -37,6 +37,12 @@ func NewSecretBox(masterSecret string) (*SecretBox, error) {
 // APP_ form is used by the application's standard configuration convention;
 // the short form is convenient for deployment managers.
 func NewEnvironmentSecretBox() (*SecretBox, error) {
+	return NewConfiguredSecretBox("")
+}
+
+// NewConfiguredSecretBox prefers environment variables and secret files, then
+// falls back to the application's MQTT configuration value.
+func NewConfiguredSecretBox(configuredSecret string) (*SecretBox, error) {
 	for _, key := range []string{"APP_MQTT__MASTER_SECRET", "MQTT_MASTER_SECRET"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 			return NewSecretBox(value)
@@ -59,6 +65,9 @@ func NewEnvironmentSecretBox() (*SecretBox, error) {
 			return nil, fmt.Errorf("read MQTT master secret file: %w", err)
 		}
 		return NewSecretBox(string(value))
+	}
+	if strings.TrimSpace(configuredSecret) != "" {
+		return NewSecretBox(configuredSecret)
 	}
 	return nil, ErrMasterSecretRequired
 }
