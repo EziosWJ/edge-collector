@@ -44,6 +44,15 @@ try {
     await page.evaluate(() => window.mqttMonitorTest.connect());
     await page.getByRole("status", { name: "MQTT 连接状态：已连接" }).waitFor();
 
+    await page.context().setOffline(true);
+    await page.getByTestId("mqtt-monitor-offline-notice").waitFor();
+    await page.getByRole("status", { name: "MQTT 连接状态：浏览器离线" }).waitFor();
+    await page.context().setOffline(false);
+    await page.getByTestId("mqtt-monitor-offline-notice").waitFor({ state: "detached" });
+    await page.getByRole("status", { name: "MQTT 连接状态：重连中" }).waitFor();
+    await page.evaluate(() => window.mqttMonitorTest.connect());
+    await page.getByRole("status", { name: "MQTT 连接状态：已连接" }).waitFor();
+
     const subscriptions = await page.evaluate(() => window.mqttMonitorTest.clients.at(-1)?.subscriptions ?? []);
     assert.deepEqual(subscriptions.sort(), [
       "edge/edge-01/device/+/command-result",

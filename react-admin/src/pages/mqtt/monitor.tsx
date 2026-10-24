@@ -130,6 +130,7 @@ export function MqttMonitorPage({ clientFactory = createMqttMonitorClient }: { c
   const [selectedMessage, setSelectedMessage] = useState<MqttMonitorMessage | null>(null);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [copiedField, setCopiedField] = useState<"topic" | "payload" | null>(null);
+  const [browserOnline, setBrowserOnline] = useState(() => navigator.onLine);
   const clientRef = useRef<ReturnType<MqttMonitorClientFactory> | null>(null);
   const listenersRef = useRef<Array<() => void>>([]);
   const currentTopicsRef = useRef<string[]>([]);
@@ -139,6 +140,20 @@ export function MqttMonitorPage({ clientFactory = createMqttMonitorClient }: { c
   const pausedRef = useRef(paused);
   const messageListRef = useRef<HTMLDivElement>(null);
   const atTopRef = useRef(true);
+
+  useEffect(() => {
+    const handleOffline = () => {
+      setBrowserOnline(false);
+      if (clientRef.current && !manualDisconnectRef.current && !terminalErrorRef.current) setConnectionState("reconnecting");
+    };
+    const handleOnline = () => setBrowserOnline(true);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -307,6 +322,8 @@ export function MqttMonitorPage({ clientFactory = createMqttMonitorClient }: { c
   };
 
   const status = statusMeta[connectionState];
+  const statusLabel = browserOnline ? status.label : "浏览器离线";
+  const statusTone = browserOnline ? status.tone : "error";
 
   return (
     <PermissionGuard
@@ -319,16 +336,16 @@ export function MqttMonitorPage({ clientFactory = createMqttMonitorClient }: { c
           description="只读观察 Edge Collector 发布的 MQTT 上报；不会订阅或发送控制指令。"
           actions={
             <div className="flex flex-wrap items-center gap-space-2">
-              <div className="flex h-control-sm items-center gap-1.5 rounded-control bg-neutral-background px-space-2 text-xs" role="status" aria-label={`MQTT 连接状态：${status.label}`}>
-                <span className={cn("h-2 w-2 rounded-full", status.tone === "success" ? "bg-success" : status.tone === "warning" ? "bg-warning" : status.tone === "error" ? "bg-error" : "bg-text-tertiary")} aria-hidden />
-                {status.label}
+              <div className="flex h-control-sm items-center gap-1.5 rounded-control bg-neutral-background px-space-2 text-xs" role="status" aria-label={`MQTT 连接状态：${statusLabel}`}>
+                <span className={cn("h-2 w-2 rounded-full", statusTone === "success" ? "bg-success" : statusTone === "warning" ? "bg-warning" : statusTone === "error" ? "bg-error" : "bg-text-tertiary")} aria-hidden />
+                {statusLabel}
               </div>
             </div>
           }
         >
 
         <form onSubmit={handleConnect}>
-          <ContentCard title="只读连接" description="使用专门的 Broker 只读账号；密码只保存在当前页面内存。" extra={<StatusTag tone={status.tone}>{status.label}</StatusTag>}>
+          <ContentCard title="只读连接" description="使用专门的 Broker 只读账号；密码只保存在当前页面内存。" extra={<StatusTag tone={statusTone}>{statusLabel}</StatusTag>}>
             <div className="grid gap-space-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="md:col-span-2 xl:col-span-2">
                 <Field label="WebSocket Broker 地址" htmlFor="mqtt-monitor-url" required help="例如 ws://localhost:9001 或 wss://broker.example.com/mqtt">
@@ -374,6 +391,7 @@ export function MqttMonitorPage({ clientFactory = createMqttMonitorClient }: { c
               <span className="text-helper text-text-tertiary">当前会话使用独立 client ID，连接关闭后不保留离线消息。</span>
             </div>
             {connectionError && <div className="mt-space-3 flex items-start gap-space-2 rounded-control border border-error-border bg-error-background px-space-3 py-space-2 text-sm text-error" role="alert"><Link2Off className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span className="break-words">{connectionError}</span></div>}
+            {!browserOnline && <div data-testid="mqtt-monitor-offline-notice" className="mt-space-3 flex items-start gap-space-2 rounded-control border border-warning-border bg-warning-background px-space-3 py-space-2 text-sm text-warning" role="alert"><WifiOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span>浏览器处于离线状态，MQTT 消息接收已中断；恢复网络后将自动重连。</span></div>}
           </ContentCard>
         </form>
 

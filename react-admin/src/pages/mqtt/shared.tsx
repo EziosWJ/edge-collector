@@ -13,6 +13,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { z } from "zod";
 import type { UseFormReturn } from "react-hook-form";
+import { Link } from "react-router-dom";
 import { PermissionGuard } from "@/components/auth/permission-guard";
 import { ContentCard } from "@/components/common/content-card";
 import { DetailDialog } from "@/components/common/detail-dialog";
@@ -252,7 +253,7 @@ export function RuntimeOverview({ runtime, runtimeStatus, runtimeLoading, runtim
         </div>
       )}
       {outbox && !outboxError && <OutboxHealthSummary outbox={outbox} />}
-      {outboxError && <div className="mt-space-3 flex flex-col items-start gap-space-2 rounded-control border border-warning-border bg-warning-background px-space-3 py-space-3 text-body-secondary text-warning sm:flex-row sm:items-center" role="alert"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span className="flex-1">Reliable Outbox 区块加载失败：{outboxError}</span><Button size="sm" variant="secondary" onClick={onRefreshOutbox} disabled={outboxLoading}>重试</Button></div>}
+      {outboxError && <div className="mt-space-3 flex flex-col items-start gap-space-2 rounded-control border border-warning-border bg-warning-background px-space-3 py-space-3 text-body-secondary text-warning sm:flex-row sm:items-center" role="alert"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span className="flex-1">Reliable Outbox 区块加载失败：{outboxError}</span><Link to="/mqtt/config#reliability" className="inline-flex h-control-sm items-center rounded-control border border-border bg-surface px-space-3 text-sm font-medium text-text-primary hover:bg-neutral-background">可靠性配置</Link><Button size="sm" variant="secondary" onClick={onRefreshOutbox} disabled={outboxLoading}>重试</Button></div>}
       {safeOutboxError && <div className="mt-space-3 rounded-control border border-warning-border bg-warning-background px-space-3 py-space-2 text-body-secondary text-warning" role="alert">最近一次 Outbox 投递失败：{safeOutboxError}</div>}
     </ContentCard>
   );

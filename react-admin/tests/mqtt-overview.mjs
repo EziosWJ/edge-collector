@@ -156,7 +156,8 @@ try {
         await page.getByText("加载失败", { exact: true }).first().waitFor();
         await page.getByRole("alert").getByText("Reliable Outbox 区块加载失败：Outbox 统计暂时不可用", { exact: true }).waitFor();
         assert.equal(await page.getByRole("link", { name: /连接配置/ }).getAttribute("href"), "/mqtt/config#broker");
-        assert.equal(await page.getByRole("link", { name: /Command Journal/ }).getAttribute("href"), "/mqtt/commands");
+        assert.equal(await page.getByRole("link", { name: /Command Journal/ }).getAttribute("href"), "/mqtt/commands?status=FAILED");
+        assert.equal(await page.getByRole("alert").getByRole("link", { name: "可靠性配置", exact: true }).getAttribute("href"), "/mqtt/config#reliability");
         mock.mode.outbox = "success";
         await page.getByRole("alert").getByRole("button", { name: "重试", exact: true }).click();
         await page.getByText("Reliable Outbox 容量", { exact: true }).waitFor();

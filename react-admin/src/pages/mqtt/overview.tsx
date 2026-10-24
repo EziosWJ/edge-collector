@@ -86,7 +86,7 @@ function MqttOverviewContent() {
           <Link to="/mqtt/config#broker" className="inline-flex h-control-md items-center gap-space-2 rounded-control border border-border bg-surface px-space-4 text-sm font-medium text-text-primary hover:bg-neutral-background">
             <Settings2 className="h-4 w-4" aria-hidden />连接配置
           </Link>
-          <Link to="/mqtt/commands" className="inline-flex h-control-md items-center gap-space-2 rounded-control border border-border bg-surface px-space-4 text-sm font-medium text-text-primary hover:bg-neutral-background">
+          <Link to="/mqtt/commands?status=FAILED" className="inline-flex h-control-md items-center gap-space-2 rounded-control border border-border bg-surface px-space-4 text-sm font-medium text-text-primary hover:bg-neutral-background">
             <Activity className="h-4 w-4" aria-hidden />Command Journal
           </Link>
         </div>
