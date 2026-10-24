@@ -186,6 +186,28 @@ function scenarioData(name) {
     };
   }
 
+  if (name === "manyChannels") {
+    const channels = Array.from({ length: 24 }, (_, index) => ({
+      ...healthyChannels[index % healthyChannels.length],
+      id: index + 1,
+      name: `通道 ${String(index + 1).padStart(2, "0")}`,
+    }));
+    return {
+      channels,
+      devices: [],
+      channelStates: channels.map((channel, index) => (
+        index === channels.length - 1
+          ? channelState(channel, "OFFLINE", "链路超时")
+          : channelState(channel)
+      )),
+      states: [],
+      scriptStates: [],
+      mqtt,
+      outbox,
+      health: true,
+    };
+  }
+
   if (name === "unconfigured") {
     return {
       channels: [],
@@ -240,6 +262,7 @@ async function waitForServer() {
 async function mockApi(page, scenarioName, options = {}) {
   const data = scenarioData(scenarioName);
   let refreshCount = 0;
+  let statesRequests = 0;
   let statesFailed = Boolean(options.failFirstStates);
   let firstRefreshFailed = Boolean(options.failOnRefresh);
   let mqttForbidden = Boolean(options.mqttForbidden);
@@ -302,6 +325,7 @@ async function mockApi(page, scenarioName, options = {}) {
       return;
     }
     if (path === "/api/v1/acquisition/states") {
+      statesRequests += 1;
       if (firstRefreshFailed && refreshCount > 0) {
         await route.fulfill({ status: 503, contentType: "application/json", body: envelope(null, 503, "采集服务暂时不可用") });
         return;
@@ -329,11 +353,15 @@ async function mockApi(page, scenarioName, options = {}) {
     markRefresh() {
       refreshCount += 1;
     },
+    statesRequests() {
+      return statesRequests;
+    },
   };
 }
 
 async function openDashboard(browser, scenarioName, options = {}) {
   const page = await browser.newPage({ viewport: options.viewport ?? { width: 1280, height: 900 } });
+  if (options.clock) await page.clock.install();
   const mock = await mockApi(page, scenarioName, options);
   await page.goto(`${baseUrl}/dashboard`, { waitUntil: "domcontentloaded" });
   return { page, mock };
@@ -346,6 +374,24 @@ async function waitForDashboard(page) {
 async function clickRefresh(page, mock) {
   mock.markRefresh();
   await page.getByTestId("dashboard-refresh").click();
+}
+
+async function waitForStatesRequests(mock, predicate, description, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate(mock.statesRequests())) return;
+    await delay(25);
+  }
+  throw new Error(`${description}: expected acquisition states requests to change, got ${mock.statesRequests()}`);
+}
+
+async function waitForEnabled(locator, description, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await locator.isEnabled()) return;
+    await delay(25);
+  }
+  throw new Error(`${description}: control stayed disabled`);
 }
 
 async function runCase(name, callback, failures) {
@@ -469,6 +515,81 @@ try {
         await waitForDashboard(page);
         await page.getByTestId("dashboard-domain-mqtt").getByText("数据不可用").waitFor();
         await page.getByTestId("dashboard-attention").getByText("MQTT 运行数据暂不可用").waitFor();
+      } finally {
+        await page.close();
+      }
+    }, failures);
+
+    await runCase("channel board scrolls inside content area", async () => {
+      const { page, mock } = await openDashboard(browser, "manyChannels", { clock: true });
+      try {
+        await waitForDashboard(page);
+        const scroll = page.getByTestId("dashboard-channel-scroll");
+        await scroll.waitFor();
+        const rows = page.getByTestId("dashboard-channel-row");
+        assert.equal(await rows.count(), 24, "expected every enabled channel rendered without pagination");
+        const layout = await scroll.evaluate((element) => ({
+          clientHeight: element.clientHeight,
+          scrollHeight: element.scrollHeight,
+          overflowY: getComputedStyle(element).overflowY,
+        }));
+        assert.ok(layout.scrollHeight > layout.clientHeight, `channel board should overflow vertically: ${JSON.stringify(layout)}`);
+        assert.ok(["auto", "scroll"].includes(layout.overflowY), `channel board should scroll vertically: ${layout.overflowY}`);
+        const firstRow = rows.first();
+        await firstRow.getByText("通道 24", { exact: true }).waitFor();
+        await firstRow.getByText("离线", { exact: true }).waitFor();
+        const pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+        assert.equal(pageOverflow, false, "dashboard page horizontally overflows");
+
+        await scroll.evaluate((element) => { element.scrollTop = 200; });
+        const scrollTopBeforeRefresh = await scroll.evaluate((element) => element.scrollTop);
+        assert.ok(scrollTopBeforeRefresh > 0, "channel board did not scroll");
+        const requestsBeforeRefresh = mock.statesRequests();
+        await page.clock.runFor(10000);
+        await waitForStatesRequests(mock, (count) => count > requestsBeforeRefresh, "auto refresh while visible");
+        await delay(300);
+        const scrollTopAfterRefresh = await scroll.evaluate((element) => element.scrollTop);
+        assert.equal(scrollTopAfterRefresh, scrollTopBeforeRefresh, "channel board scroll position changed after auto refresh");
+      } finally {
+        await page.close();
+      }
+    }, failures);
+
+    await runCase("auto refresh visibility and manual refresh", async () => {
+      const { page, mock } = await openDashboard(browser, "healthy", { clock: true });
+      try {
+        await waitForDashboard(page);
+        await page.getByTestId("dashboard-channel-board").getByText("RTU 主通道").waitFor();
+        const loadedRequests = mock.statesRequests();
+        assert.ok(loadedRequests >= 1, "initial dashboard load did not request acquisition states");
+
+        await page.clock.runFor(9000);
+        await delay(200);
+        assert.equal(mock.statesRequests(), loadedRequests, "dashboard refreshed before the 10 second interval");
+        await page.clock.runFor(1000);
+        await waitForStatesRequests(mock, (count) => count === loadedRequests + 1, "auto refresh after 10 seconds");
+
+        await page.evaluate(() => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+        const hiddenRequests = mock.statesRequests();
+        await page.clock.runFor(30000);
+        await delay(300);
+        assert.equal(mock.statesRequests(), hiddenRequests, "dashboard refreshed while document was hidden");
+
+        await page.evaluate(() => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+        await waitForStatesRequests(mock, (count) => count === hiddenRequests + 1, "refresh after becoming visible again");
+
+        const refreshButton = page.getByTestId("dashboard-refresh");
+        await waitForEnabled(refreshButton, "dashboard refresh button");
+        const manualRequests = mock.statesRequests();
+        mock.markRefresh();
+        await refreshButton.click();
+        await waitForStatesRequests(mock, (count) => count === manualRequests + 1, "manual refresh");
       } finally {
         await page.close();
       }
